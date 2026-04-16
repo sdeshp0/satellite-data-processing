@@ -1,0 +1,50 @@
+name: satellite-data-processing
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Core Python
+  - python=3.11
+
+  # Scientific stack
+  - numpy
+  - scipy
+  - pandas
+  - xarray
+  - rasterio=1.3.*
+  - gdal=3.6.*
+  - rioxarray
+  - shapely=2.0.*
+  - pyproj
+  - geopandas
+  - rtree
+  - branca
+
+  # Planetary Computer + STAC
+  - pystac-client
+  - planetary-computer
+
+  # Visualization
+  - matplotlib
+  - pillow
+  - folium
+
+  # Streamlit app
+  - streamlit
+
+  # Jupyter
+  - jupyterlab
+  - ipykernel
+
+  # Utilities
+  - pyyaml
+  - tqdm
+
+  # pip section
+  - pip
+  - pip:
+      - streamlit-folium
+      - rio-cogeo
+      - rasterio[s3]
+      - geopy
