@@ -1,0 +1,12 @@
+streamlit
+leafmap
+pystac-client
+planetary-computer
+rasterio
+xarray
+numpy
+shapely
+matplotlib
+pillow
+geopy
+pyproj
