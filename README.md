@@ -1,11 +1,9 @@
 # satellite-data-processing
-A modular, multi‑project repository for learning, experimenting, and storytelling with satellite data using the 
-Microsoft Planetary Computer.
+A repository for learning and experimenting with satellite data using the Microsoft Planetary Computer.
 
 The repo provides:
 - a shared geospatial core (core/)
 - a unified interactive app (app/)
-- a config‑driven, reproducible pipeline
 
 This structure allows for the addition of modules as new pages to the app
 
@@ -74,20 +72,9 @@ streamlit run app/streamlit_app.py
 ```
 
 This opens an interactive UI where you can:
-- search for a place
+- search for a place using Nominatim as a geolocator
 - define AOI size
-- choose indices (NBR, NDVI, NDWI, etc.)
-- run the before/after pipeline
-- explore RGB, delta maps, swipe comparison
-- read human‑interpretable index summaries
+- search for Sentinel2 scenes in a configurable date range
+- select a single scene and display charts for that scene
 
 ---
-
-## Future Growth
-
-Once Page 1 is stable, we will add:
-
-- Time Series Explorer (Page 2)
-- Before/After Comparison (Page 3)
-- Caching, config system, interpretation engine, etc.
-
