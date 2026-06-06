@@ -2,8 +2,9 @@
 A repository for learning and experimenting with satellite data using the Microsoft Planetary Computer.
 
 The repo provides:
-- a shared geospatial core (core/)
-- a unified interactive app (app/)
+- shared geospatial core (core/)
+- interactive app (app/)
+- notebooks for experiments and testing
 
 This structure allows for the addition of modules as new pages to the app
 
@@ -25,10 +26,10 @@ satellite-data-processing/
 ├── core/
 │   ├── __init__.py
 │   ├── stac.py          # STAC search (Sentinel-2 only)
-│   ├── load.py          # Load RGB + required bands for indices
-│   ├── indices.py       # NDVI, NBR, NDWI (minimal set)
-│   ├── viz.py           # RGB visualization helpers
-│   └── utils.py         # AOI helpers, small utilities
+│   ├── load.py          # Load band data for scene, clipped to selected area of interest
+│   ├── indices.py       # Computation of indices including NDVI, NBR, NDWI
+│   ├── viz.py           # Visualization helpers
+│   └── utils.py         # AOI helpers, raster data processing functions
 │
 ├── app/
 │   ├── streamlit_app.py
