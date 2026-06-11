@@ -2,7 +2,7 @@
 Single Scene Explorer page.
 
 Workflow:
-1. Select AOI
+1. Use the main page to select AOI
 2. Select date range
 3. Search Sentinel‑2 scenes
 4. Pick one scene
@@ -14,15 +14,17 @@ from __future__ import annotations
 from datetime import date
 import streamlit as st
 
-from app.components.aoi_selector import aoi_selector
 from app.components.scene_selector import scene_selector
 from app.components.index_display import index_display
 
-
 st.title("Single Scene Explorer")
 
-# --- AOI ---
-aoi = aoi_selector()
+# --- Require AOI from main page ---
+if "aoi" not in st.session_state:
+    st.warning("Please select an AOI on the home page before continuing.")
+    st.stop()
+
+aoi = st.session_state["aoi"]
 
 # --- Date Range ---
 st.subheader("Date Range")
