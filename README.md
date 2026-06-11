@@ -1,24 +1,31 @@
 # satellite-data-processing
-A repository for learning and experimenting with satellite data using the Microsoft Planetary Computer.
 
-The repo provides:
-- shared geospatial core (core/)
-- interactive app (app/)
-- notebooks for experiments and testing
+An interactive toolkit for exploring Sentinel‑2 satellite imagery using the
+Microsoft Planetary Computer. The project provides a clean, modular pipeline for:
 
-This structure allows for the addition of modules as new pages to the app
+- selecting an Area of Interest (AOI)
+- searching Sentinel‑2 scenes via STAC
+- loading and clipping scene bands
+- computing spectral indices (NDVI, NBR, NDWI)
+- visualizing RGB and index maps
+- running everything through a Streamlit-based UI
 
----
-## Current Scope (Phase 1)
-
-- Select an AOI
-- Select a date range
-- Search Sentinel-2 scenes
-- Pick one scene
-- Load RGB + compute NDVI/NBR/NDWI
-- Display results
+The repository is structured to support experimentation and extension into additional workflows or pages.
 
 ---
+
+## Features
+
+- 🌍 **AOI selection** using geocoded search + adjustable width/height  
+- 🛰️ **Sentinel‑2 STAC search** with cloud-cover filtering  
+- 🎨 **RGB rendering** with min–max stretch  
+- 📈 **Spectral indices**: NDVI, NBR, NDWI  
+- 🗺️ **Interactive map preview** using Leafmap  
+- 🧩 **Modular architecture** (core processing + UI components)  
+- 🧼 **Fully cleaned and modernized codebase** with type hints and consistent structure  
+
+---
+
 ## Project Structure
 ```
 satellite-data-processing/
