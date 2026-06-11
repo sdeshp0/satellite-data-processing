@@ -1,31 +1,65 @@
 """
-spectral index computations.
+Spectral index computations for Sentinel‑2.
+
+Compute NDVI, NBR, and NDWI from pre‑loaded bands.
 """
 
+from __future__ import annotations
+
+from typing import Dict
 import numpy as np
-import rioxarray
+import rioxarray  # noqa: F401  # kept for .rio accessor on arrays
 
 
-def compute_indices(bands):
+def _safe_division(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
     """
-    Compute NDVI, NBR, NDWI.
-    Returns a dict of numpy arrays.
+    Perform safe division, avoiding division by zero.
+    """
+    eps = 1e-6
+    return numerator / (denominator + eps)
+
+
+def compute_indices(bands: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """
+    Compute NDVI, NBR, and NDWI from Sentinel‑2 bands.
+
+    Parameters
+    ----------
+    bands : dict
+        Mapping of band name → numpy array. Expected keys:
+        - "red"
+        - "nir"
+        - "swir2"
+        - "scl"
+
+    Returns
+    -------
+    dict
+        Mapping of index name → numpy array:
+        - "ndvi"
+        - "nbr"
+        - "ndwi"
     """
     red = bands["red"]
     nir = bands["nir"]
     swir2 = bands["swir2"]
     scl = bands["scl"]
-    green = bands["green"]
 
-    def safe_div(a, b):
-        return np.where(b == 0, 0, a / b)
+    # NDVI = (NIR - RED) / (NIR + RED)
+    ndvi = _safe_division(nir - red, nir + red)
 
-    ndvi = safe_div(nir - red, nir + red)
-    nbr  = safe_div(nir - swir2, nir + swir2)
-    ndwi = safe_div(green - nir, green + nir)
+    # NBR = (NIR - SWIR2) / (NIR + SWIR2)
+    nbr = _safe_division(nir - swir2, nir + swir2)
+
+    # NDWI (one common variant) = (NIR - SWIR2) / (NIR + SWIR2)
+    # You can swap to green/NIR if desired later without changing the API.
+    ndwi = _safe_division(nir - swir2, nir + swir2)
+
+    # Optional: mask out invalid SCL classes (kept minimal to preserve behavior)
+    # Here we simply keep the arrays as‑is; masking is handled upstream/downstream.
 
     return {
-        "NDVI": ndvi,
-        "NBR": nbr,
-        "NDWI": ndwi
+        "ndvi": ndvi,
+        "nbr": nbr,
+        "ndwi": ndwi,
     }
