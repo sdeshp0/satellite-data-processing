@@ -45,7 +45,7 @@ def index_display(item: Any, aoi) -> None:
 
     # --- RGB ---
     rgb = to_rgb(bands)
-    st.image(rgb, caption="RGB", use_column_width=True)
+    st.image(rgb, caption="RGB", width="stretch")
 
     # --- SCL  ---
     # scl_fig = viz_scl(bands)

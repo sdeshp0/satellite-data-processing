@@ -83,6 +83,6 @@ def aoi_selector() -> Optional[Polygon]:
     })
 
     m.add_geojson(geojson, layer_name="AOI")
-    m.to_streamlit(height=500)
+    m.to_streamlit(height=500, use_container_width=True, embed=True)
 
     return rect

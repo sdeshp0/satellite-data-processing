@@ -9,12 +9,12 @@ import os
 import sys
 import streamlit as st
 
-from app.components.aoi_selector import aoi_selector
-
 # --- Ensure project root is on sys.path ---
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
+
+from app.components.aoi_selector import aoi_selector
 
 # --- Page Configuration ---
 st.set_page_config(
