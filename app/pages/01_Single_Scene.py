@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 import streamlit as st
 
+from app.components.aoi_selector import render_aoi_preview
 from app.components.scene_selector import scene_selector
 from app.components.index_display import index_display
 
@@ -25,6 +26,10 @@ if "aoi" not in st.session_state:
     st.stop()
 
 aoi = st.session_state["aoi"]
+aoi_label = st.session_state.get("aoi_label", "Unknown location")
+
+st.info(f"**AOI selected:** {aoi_label}")
+render_aoi_preview(aoi)
 
 # --- Date Range ---
 st.subheader("Date Range")

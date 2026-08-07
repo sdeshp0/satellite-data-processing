@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from app.components.aoi_selector import aoi_selector
+from app.components.aoi_selector import aoi_selector, render_aoi_preview
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -26,20 +26,21 @@ st.set_page_config(
 st.sidebar.title("Navigation")
 st.sidebar.write("Use the pages on the left to explore satellite data.")
 
-if "aoi" in st.session_state:
-    st.sidebar.success("AOI selected")
-else:
-    st.sidebar.warning("No AOI selected")
+# AOI status indicator
+if "aoi" in st.session_state and st.session_state["aoi"] is not None:
+    st.sidebar.success(f"AOI selected: {st.session_state.get('aoi_label', '')}")
 
 # --- Main Page ---
 st.title("Satellite Data Processing App")
 st.write("Select an Area of Interest (AOI) here, then use the pages to run analyses.")
 
+# --- AOI Selection Section ---
 st.subheader("Select Area of Interest")
-aoi = aoi_selector()
+aoi_selector()   # Handles its own rerun logic and st.stop()
 
-if aoi is not None:
-    st.session_state["aoi"] = aoi
-    st.success("AOI saved. You can now navigate to any analysis page.")
+# --- AOI Banner + Preview ---
+if "aoi" in st.session_state and st.session_state["aoi"] is not None:
+    st.success(f"AOI selected: {st.session_state.get('aoi_label', '')}")
+    render_aoi_preview(st.session_state["aoi"], height=250)
 else:
     st.info("Select an AOI to enable analysis pages.")

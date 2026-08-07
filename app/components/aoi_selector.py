@@ -5,7 +5,7 @@ Allows users to search for a location, define AOI size, and preview on a map.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 import math
 import json
 
@@ -15,14 +15,14 @@ from geopy.geocoders import Nominatim
 from shapely.geometry import box, Polygon, mapping
 
 
-def aoi_selector() -> Optional[Polygon]:
+def aoi_selector() -> Tuple[Optional[Polygon], Optional[str]]:
     """
     Interactive AOI selector using a text-based location search.
 
     Returns
     -------
-    shapely.geometry.Polygon or None
-        AOI rectangle in EPSG:4326 coordinates.
+    Tuple[Optional[Polygon], Optional[str]]
+        (AOI rectangle in EPSG:4326, human-readable label)
     """
     st.subheader("Area of Interest")
 
@@ -40,17 +40,31 @@ def aoi_selector() -> Optional[Polygon]:
         "AOI height (km)", min_value=1.0, max_value=200.0, value=10.0
     )
 
+    # --- Search trigger ---
+    if st.button("Search location"):
+        st.session_state["do_search"] = True
+
     if not location_query:
         st.info("Enter a location to generate an AOI.")
-        return None
+        return None, None
+
+    if not st.session_state.get("do_search", False):
+        return None, None
 
     # --- Geocoding ---
-    geolocator = Nominatim(user_agent="aoi_selector")
-    location = geolocator.geocode(location_query)
+    geolocator = Nominatim(user_agent="aoi_selector", timeout=10)
+
+    try:
+        location = geolocator.geocode(location_query)
+    except Exception:
+        st.error("Geocoding service unavailable. Please try again.")
+        st.session_state["do_search"] = False
+        return None, None
 
     if location is None:
         st.error("Location not found. Try a different search.")
-        return None
+        st.session_state["do_search"] = False
+        return None, None
 
     lat, lon = location.latitude, location.longitude
 
@@ -64,6 +78,13 @@ def aoi_selector() -> Optional[Polygon]:
     maxy = lat + dlat
 
     rect = box(minx, miny, maxx, maxy)
+
+    # Save AOI globally
+    st.session_state["aoi"] = rect
+    st.session_state["aoi_label"] = location.address
+
+    # Reset search flag
+    st.session_state["do_search"] = False
 
     st.success(f"AOI centered on: {location.address}")
     st.write("Bounds:", rect.bounds)
@@ -83,6 +104,27 @@ def aoi_selector() -> Optional[Polygon]:
     })
 
     m.add_geojson(geojson, layer_name="AOI")
-    m.to_streamlit(height=500, use_container_width=True, embed=True)
+    m.to_streamlit(height=500, width=None, embed=True)
 
-    return rect
+    # Prevent rerun loop
+    st.stop()
+
+
+def render_aoi_preview(aoi, height=200):
+    """
+    Display a small AOI preview map in Streamlit.
+
+    Parameters
+    ----------
+    aoi : Polygon
+        AOI geometry in EPSG:4326. If None, nothing is shown.
+    height : int
+        Height of the map in pixels.
+    """
+
+    if aoi is None:
+        return
+
+    m = leafmap.Map(center=aoi.centroid.coords[0], zoom=10)
+    m.add_geojson(json.dumps(mapping(aoi)), layer_name="AOI")
+    m.to_streamlit(height=height, embed=True, width=None)
