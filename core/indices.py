@@ -1,5 +1,5 @@
 """
-Spectral index computations for Sentinel‑2.
+Spectral index computations for Sentinel-2.
 
 Compute NDVI, NBR, and NDWI from Xarray DataArrays.
 """
@@ -22,39 +22,31 @@ def _safe_division(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray
 
 def compute_indices(bands: Dict[str, xr.DataArray]) -> Dict[str, np.ndarray]:
     """
-    Compute NDVI, NBR, and NDWI from Sentinel‑2 bands.
+    Compute NDVI, NBR, and NDWI from Sentinel-2 bands.
 
     Parameters
     ----------
     bands : dict
-        Mapping of band name → Xarray DataArray. Expected keys:
-        - "red"
-        - "nir"
-        - "swir2"
-        - "scl"
+        Mapping of band name -> Xarray DataArray. Expected keys:
+        - "red", "green", "nir", "swir2", "scl"
 
     Returns
     -------
     dict
-        Mapping of index name → numpy array:
-        - "ndvi"
-        - "nbr"
-        - "ndwi"
+        Mapping of index name -> numpy array:
+        - "ndvi": (NIR - RED) / (NIR + RED)
+        - "nbr":  (NIR - SWIR2) / (NIR + SWIR2)
+        - "ndwi": (GREEN - NIR) / (GREEN + NIR)   [McFeeters, 1996]
+
     """
-    # Extract numpy arrays
     red = bands["red"].values
+    green = bands["green"].values
     nir = bands["nir"].values
     swir2 = bands["swir2"].values
-    scl = bands["scl"].values  # kept for API consistency, not used here
 
-    # NDVI = (NIR - RED) / (NIR + RED)
     ndvi = _safe_division(nir - red, nir + red)
-
-    # NBR = (NIR - SWIR2) / (NIR + SWIR2)
     nbr = _safe_division(nir - swir2, nir + swir2)
-
-    # NDWI (variant using NIR/SWIR2)
-    ndwi = _safe_division(nir - swir2, nir + swir2)
+    ndwi = _safe_division(green - nir, green + nir)
 
     return {
         "ndvi": ndvi,

@@ -1,92 +1,156 @@
 """
-Scene loading utilities for Sentinel‑2.
-Loads and clips bands to the AOI and returns rioxarray‑enabled DataArrays.
+Scene loading utilities for Sentinel-2.
+Loads and clips bands to the AOI and returns rioxarray-enabled DataArrays.
+
+Performance changes vs. the original version:
+- GDAL/rasterio HTTP settings tuned for cloud-optimized GeoTIFFs (fewer
+  redundant requests, merged byte-range reads, local block caching).
+- Bands are read concurrently (ThreadPoolExecutor) instead of one at a time,
+  since GDAL releases the GIL during network I/O.
+- Optional decimated reads via `max_dim`, so callers that only need a
+  preview-resolution image (e.g. RGB thumbnails, index maps for display)
+  don't pay for full 10m reads over the network.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
+
 from shapely.geometry import Polygon
 from shapely.ops import transform
 from rasterio.windows import from_bounds
+from rasterio.enums import Resampling
+from rasterio import Affine
 import rasterio
 import pyproj
 import numpy as np
 import xarray as xr
 
 
-def load_scene(item: Any, aoi: Polygon) -> Dict[str, xr.DataArray]:
+# GDAL settings recommended for reading Cloud-Optimized GeoTIFFs (COGs) over
+# HTTP (e.g. Planetary Computer / Azure Blob Storage). These cut down on
+# redundant directory-listing and per-block requests, and merge nearby byte
+# ranges into fewer round trips.
+GDAL_HTTP_OPTS = dict(
+    GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+    CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.TIF,.tiff",
+    GDAL_HTTP_MULTIRANGE="YES",
+    GDAL_HTTP_MERGE_CONSECUTIVE_RANGES="YES",
+    VSI_CACHE=True,
+    VSI_CACHE_SIZE=200_000_000,  # 200MB local block cache per read session
+    GDAL_CACHEMAX=256,
+)
+
+ASSET_MAP = {
+    "red":   "B04",
+    "green": "B03",
+    "blue":  "B02",
+    "nir":   "B08",
+    "swir2": "B12",
+    "scl":   "SCL",
+}
+
+
+def _read_band(
+    name: str,
+    href: str,
+    aoi: Polygon,
+    max_dim: Optional[int],
+) -> Tuple[str, xr.DataArray]:
     """
-    Load Sentinel‑2 bands clipped to the AOI.
+    Read a single band, clipped to the AOI, optionally decimated on read.
+
+    max_dim, if given, caps the longer side of the output array to this many
+    pixels by asking GDAL to decimate during the read (much cheaper than
+    reading full resolution and downsampling afterwards). Pass None for a
+    full-resolution read.
+    """
+    with rasterio.Env(**GDAL_HTTP_OPTS), rasterio.open(href) as src:
+
+        project = pyproj.Transformer.from_crs(
+            "EPSG:4326", src.crs, always_xy=True
+        ).transform
+        aoi_proj = transform(project, aoi)
+
+        window = from_bounds(*aoi_proj.bounds, transform=src.transform)
+
+        out_shape = None
+        if max_dim is not None:
+            scale = min(1.0, max_dim / max(window.height, window.width))
+            out_shape = (
+                max(1, int(round(window.height * scale))),
+                max(1, int(round(window.width * scale))),
+            )
+
+        data = src.read(
+            1,
+            window=window,
+            out_shape=out_shape,
+            resampling=Resampling.bilinear,
+        )
+
+        win_transform = src.window_transform(window)
+        if out_shape is not None:
+            scale_x = window.width / out_shape[1]
+            scale_y = window.height / out_shape[0]
+            win_transform = win_transform * Affine.scale(scale_x, scale_y)
+
+        res_x = win_transform.a
+        res_y = win_transform.e
+        start_x = win_transform.c + res_x / 2
+        start_y = win_transform.f + res_y / 2
+
+        xs = (start_x + np.arange(data.shape[1]) * res_x)
+        ys = (start_y + np.arange(data.shape[0]) * res_y)
+
+        da = xr.DataArray(
+            data=data,
+            dims=["y", "x"],
+            coords={"y": ys, "x": xs},
+            name=name,
+        )
+        da = da.rio.write_crs(src.crs)
+        da = da.rio.write_transform(win_transform)
+
+    return name, da
+
+
+def load_scene(
+    item: Any,
+    aoi: Polygon,
+    max_dim: Optional[int] = None,
+    max_workers: int = 6,
+) -> Dict[str, xr.DataArray]:
+    """
+    Load Sentinel-2 bands clipped to the AOI, fetched concurrently.
 
     Parameters
     ----------
     item : pystac.Item
-        STAC item containing Sentinel‑2 band assets.
+        STAC item containing Sentinel-2 band assets.
     aoi : shapely.geometry.Polygon
         AOI in EPSG:4326.
+    max_dim : int, optional
+        Cap the longer side of each band to this many pixels via a decimated
+        read. None (default) preserves original full-resolution behavior.
+    max_workers : int
+        Number of bands fetched concurrently. 6 = one thread per band, which
+        is fine here since there are only 6 assets per scene.
 
     Returns
     -------
     Dict[str, xr.DataArray]
-        Dictionary of band name → clipped DataArray with CRS + transform.
+        Mapping of band name -> clipped DataArray with CRS + transform.
     """
-
-    # Asset mapping (unchanged behavior)
-    asset_map = {
-        "red":   "B04",
-        "green": "B03",
-        "blue":  "B02",
-        "nir":   "B08",
-        "swir2": "B12",
-        "scl":   "SCL",
-    }
+    jobs = [
+        (name, item.assets[asset_key].href, aoi, max_dim)
+        for name, asset_key in ASSET_MAP.items()
+    ]
 
     bands: Dict[str, xr.DataArray] = {}
-
-    for name, asset_key in asset_map.items():
-        href = item.assets[asset_key].href
-
-        with rasterio.open(href) as src:
-
-            # Reproject AOI from EPSG:4326 → raster CRS
-            project = pyproj.Transformer.from_crs(
-                "EPSG:4326", src.crs, always_xy=True
-            ).transform
-            aoi_proj = transform(project, aoi)
-
-            # Clip window in raster CRS
-            window = from_bounds(*aoi_proj.bounds, transform=src.transform)
-
-            # Read clipped data
-            data = src.read(1, window=window)
-
-            # Compute window transform
-            win_transform = src.window_transform(window)
-
-            # Pixel resolution
-            res_x = win_transform.a
-            res_y = win_transform.e
-
-            # Pixel center coordinates
-            start_x = win_transform.c + res_x / 2
-            start_y = win_transform.f + res_y / 2
-
-            xs = np.arange(start_x, start_x + data.shape[1] * res_x, res_x)
-            ys = np.arange(start_y, start_y + data.shape[0] * res_y, res_y)
-
-            # Build DataArray
-            da = xr.DataArray(
-                data=data,
-                dims=["y", "x"],
-                coords={"y": ys, "x": xs},
-                name=name,
-            )
-
-            # Attach CRS + transform for rioxarray
-            da = da.rio.write_crs(src.crs)
-            da = da.rio.write_transform(win_transform)
-
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for name, da in ex.map(lambda job: _read_band(*job), jobs):
             bands[name] = da
 
     return bands
