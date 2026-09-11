@@ -26,6 +26,7 @@ import rasterio
 import pyproj
 import numpy as np
 import xarray as xr
+import planetary_computer as pc
 
 
 # GDAL settings recommended for reading Cloud-Optimized GeoTIFFs (COGs) over
@@ -42,11 +43,14 @@ GDAL_HTTP_OPTS = dict(
     GDAL_CACHEMAX=256,
 )
 
+# "swir1" (B11) added for NDMI / NDBI / BSI. It's a 20m-native band like
+# swir2 and scl, so it also needs to flow through resample_bands.
 ASSET_MAP = {
     "red":   "B04",
     "green": "B03",
     "blue":  "B02",
     "nir":   "B08",
+    "swir1": "B11",
     "swir2": "B12",
     "scl":   "SCL",
 }
@@ -65,7 +69,15 @@ def _read_band(
     pixels by asking GDAL to decimate during the read (much cheaper than
     reading full resolution and downsampling afterwards). Pass None for a
     full-resolution read.
+
+    The href is re-signed here, immediately before use, rather than relying
+    on the signed href already attached to the item from search time. Items
+    (and their hrefs) can sit in Streamlit's cache for up to an hour --
+    signing fresh on every read means a stale cached item never causes a
+    403 from an expired SAS token.
     """
+    href = pc.sign(href)
+
     with rasterio.Env(**GDAL_HTTP_OPTS), rasterio.open(href) as src:
 
         project = pyproj.Transformer.from_crs(
@@ -120,7 +132,7 @@ def load_scene(
     item: Any,
     aoi: Polygon,
     max_dim: Optional[int] = None,
-    max_workers: int = 6,
+    max_workers: int = len(ASSET_MAP),
 ) -> Dict[str, xr.DataArray]:
     """
     Load Sentinel-2 bands clipped to the AOI, fetched concurrently.
@@ -135,8 +147,8 @@ def load_scene(
         Cap the longer side of each band to this many pixels via a decimated
         read. None (default) preserves original full-resolution behavior.
     max_workers : int
-        Number of bands fetched concurrently. 6 = one thread per band, which
-        is fine here since there are only 6 assets per scene.
+        Number of bands fetched concurrently. Defaults to one thread per
+        band in ASSET_MAP.
 
     Returns
     -------

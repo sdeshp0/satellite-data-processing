@@ -1,22 +1,36 @@
 """
 Single Scene Explorer page.
 
-Workflow:
-1. Use the main page to select AOI
-2. Select date range
-3. Search Sentinel‑2 scenes
-4. Pick one scene
-5. Display RGB + spectral indices
+Layout:
+- Sidebar: date range + scene search (controls, not content)
+- Main area: AOI reference (collapsed), scene picker table with thumbnails,
+  then RGB + spectral indices for the selected scene.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import date
 import streamlit as st
 
+# --- Ensure project root is on sys.path ---
+# streamlit_app.py does this too, but on a multi-page deploy a visitor can
+# land directly on this page's URL (bookmark, shared link, fresh tab)
+# without streamlit_app.py ever having run first in that process --
+# without this, that path hits "ModuleNotFoundError: No module named 'app'".
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
 from app.components.aoi_selector import render_aoi_preview
-from app.components.scene_selector import scene_selector
+from app.components.scene_selector import scene_selector, scene_picker
 from app.components.index_display import index_display
+
+# Namespaces this page's widget/session_state keys. Distinct from any
+# key_prefix used on a future change-detection page (e.g. "before"/"after"),
+# so the two pages never collide even though they reuse the same components.
+KEY_PREFIX = "single"
 
 st.title("Single Scene Explorer")
 
@@ -28,38 +42,45 @@ if "aoi" not in st.session_state:
 aoi = st.session_state["aoi"]
 aoi_label = st.session_state.get("aoi_label", "Unknown location")
 
-st.info(f"**AOI selected:** {aoi_label}")
-render_aoi_preview(aoi)
+# --- Sidebar: controls ---
+with st.sidebar:
+    st.subheader("Scene Search")
+    st.caption(f"AOI: {aoi_label}")
 
-# --- Date Range ---
-st.subheader("Date Range")
-col1, col2 = st.columns(2)
+    start_date = st.date_input(
+        "Start date", value=date(2023, 1, 1), key=f"{KEY_PREFIX}_start_date"
+    )
+    end_date = st.date_input(
+        "End date", value=date(2023, 12, 31), key=f"{KEY_PREFIX}_end_date"
+    )
 
-start_date = col1.date_input("Start date", value=date(2023, 1, 1))
-end_date = col2.date_input("End date", value=date(2023, 12, 31))
+    if start_date > end_date:
+        st.error("Start date must be before end date.")
+        st.stop()
 
-if start_date > end_date:
-    st.error("Start date must be before end date.")
-    st.stop()
+    scene_selector(aoi, start_date, end_date, key_prefix=KEY_PREFIX)
 
-# --- Scene Search ---
-scene_selector(aoi, start_date, end_date)
+# --- AOI reference, tucked away so it doesn't dominate the page ---
+# The map is constrained to a centered column (rather than the full-width
+# container) so it renders at a reasonable aspect ratio instead of very
+# wide and very thin.
+with st.expander(f"AOI preview — {aoi_label}"):
+    _, preview_col, _ = st.columns([1, 2, 1])
+    with preview_col:
+        render_aoi_preview(aoi, height=420)
 
-# --- Scene Selection ---
-if "stac_items" in st.session_state:
-    items = st.session_state["stac_items"]
+items_key = f"{KEY_PREFIX}_stac_items"
+item_key = f"{KEY_PREFIX}_stac_item"
+
+# --- Scene Selection (thumbnail table instead of a text dropdown) ---
+if items_key in st.session_state:
+    items = st.session_state[items_key]
 
     if items:
-        options = [
-            f"{item.id} — {item.datetime.date()} — Cloud {item.properties.get('eo:cloud_cover', 'N/A')}%"
-            for item in items
-        ]
-
-        selected_label = st.selectbox("Select a scene", options)
-        selected_item = items[options.index(selected_label)]
-
-        st.session_state["stac_item"] = selected_item
+        selected_item = scene_picker(items, key_prefix=KEY_PREFIX)
+        if selected_item is not None:
+            st.session_state[item_key] = selected_item
 
 # --- Display Selected Scene ---
-if "stac_item" in st.session_state and aoi is not None:
-    index_display(st.session_state["stac_item"], aoi)
+if item_key in st.session_state and aoi is not None:
+    index_display(st.session_state[item_key], aoi, key_prefix=KEY_PREFIX)

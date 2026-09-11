@@ -52,7 +52,14 @@ def aoi_selector() -> Tuple[Optional[Polygon], Optional[str]]:
         return None, None
 
     # --- Geocoding ---
-    geolocator = Nominatim(user_agent="aoi_selector", timeout=10)
+    # Nominatim's usage policy (https://operations.osmfoundation.org/policies/nominatim/)
+    # asks for a genuinely identifying user agent, ideally with contact info.
+    # egress IP with a generic user agent is more likely to get rate-limited.
+    geolocator = Nominatim(
+        user_agent="satellite-data-processing-app for learning how to process satellite image data "
+                   "(contact: sidprojects01@gmail.com)",
+        timeout=10,
+    )
 
     try:
         location = geolocator.geocode(location_query)
@@ -110,16 +117,21 @@ def aoi_selector() -> Tuple[Optional[Polygon], Optional[str]]:
     st.stop()
 
 
-def render_aoi_preview(aoi, height=200):
+def render_aoi_preview(aoi, height: int = 350):
     """
-    Display a small AOI preview map in Streamlit.
+    Display an AOI preview map in Streamlit.
 
     Parameters
     ----------
     aoi : Polygon
         AOI geometry in EPSG:4326. If None, nothing is shown.
     height : int
-        Height of the map in pixels.
+        Height of the map in pixels. Default raised from the original 200px:
+        combined with `width=None` (fills the container), a short height on
+        a wide page produced a very wide, very thin map. Callers on wide
+        pages should also constrain the width by placing this in a
+        narrower column rather than relying on height alone -- see
+        app/pages/01_Single_Scene.py for an example.
     """
 
     if aoi is None:

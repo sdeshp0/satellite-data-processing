@@ -10,19 +10,26 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 
-def to_rgb(bands: Dict[str, xr.DataArray]) -> np.ndarray:
+def to_rgb(
+    bands: Dict[str, xr.DataArray],
+    lower_percentile: float = 2.0,
+    upper_percentile: float = 98.0,
+) -> np.ndarray:
     """
     Convert raw Sentinel‑2 reflectance bands to an 8‑bit RGB image.
 
-    This applies a simple min‑max stretch exactly as the original code did.
+    Uses a percentile stretch (2nd-98th by default) rather than a raw
+    min-max stretch. Min-max is very sensitive to single outlier pixels
+    (cloud edges, sensor artifacts) which can wash out contrast across the
+    whole image; clipping to a percentile range before scaling is the
+    standard fix and gives a much more usable preview.
 
     Parameters
     ----------
     bands : dict
-        Mapping of band name → DataArray. Must contain:
-        - "red"
-        - "green"
-        - "blue"
+        Mapping of band name -> DataArray. Must contain "red", "green", "blue".
+    lower_percentile, upper_percentile : float
+        Percentile bounds (0-100) used to clip before scaling to 0-255.
 
     Returns
     -------
@@ -35,12 +42,12 @@ def to_rgb(bands: Dict[str, xr.DataArray]) -> np.ndarray:
 
     stack = np.stack([r, g, b], axis=-1)
 
-    # Normalize to 0–1 (behavior preserved)
-    stack = stack - np.nanmin(stack)
-    stack = stack / (np.nanmax(stack) + 1e-6)
+    lo = np.nanpercentile(stack, lower_percentile)
+    hi = np.nanpercentile(stack, upper_percentile)
 
-    # Convert to uint8
-    rgb = (stack * 255).astype("uint8")
+    stretched = np.clip((stack - lo) / (hi - lo + 1e-6), 0.0, 1.0)
+
+    rgb = (stretched * 255).astype("uint8")
     return rgb
 
 
@@ -51,7 +58,7 @@ def viz_scl(bands: Dict[str, xr.DataArray]) -> plt.Figure:
     Parameters
     ----------
     bands : dict
-        Mapping of band name → DataArray. Must contain "scl".
+        Mapping of band name -> DataArray. Must contain "scl".
 
     Returns
     -------

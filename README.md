@@ -35,6 +35,7 @@ satellite-data-processing/
 │   ├── stac.py          # STAC search (Sentinel-2 only)
 │   ├── load.py          # Load band data for scene, clipped to selected area of interest
 │   ├── indices.py       # Computation of indices including NDVI, NBR, NDWI
+│   ├── stats.py         # Computation of summary statistics for band and index rasters
 │   ├── viz.py           # Visualization helpers
 │   └── utils.py         # AOI helpers, raster data processing functions
 │
@@ -52,8 +53,6 @@ satellite-data-processing/
 │   └── requirements.txt
 │
 ├── notebooks/
-│   ├── 01_explore_planetary_computer.ipynb  
-│   └── 02_time_series_analysis.ipynb
 │
 └── README.md
 ```
