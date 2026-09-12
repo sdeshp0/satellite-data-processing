@@ -26,21 +26,26 @@ st.set_page_config(
 st.sidebar.title("Navigation")
 st.sidebar.write("Use the pages on the left to explore satellite data.")
 
-# AOI status indicator
-if "aoi" in st.session_state and st.session_state["aoi"] is not None:
-    st.sidebar.success(f"AOI selected: {st.session_state.get('aoi_label', '')}")
-
 # --- Main Page ---
 st.title("Satellite Data Processing App")
 st.write("Select an Area of Interest (AOI) here, then use the pages to run analyses.")
 
 # --- AOI Selection Section ---
 st.subheader("Select Area of Interest")
-aoi_selector()   # Handles its own rerun logic and st.stop()
+aoi_selector()   # Handles its own rerun logic
 
-# --- AOI Banner + Preview ---
+# --- AOI status: sidebar indicator + main banner/preview ---
+# Both placed AFTER aoi_selector() runs, not before. Streamlit executes the
+# script top-to-bottom on every rerun; reading session_state["aoi_label"]
+# before aoi_selector() has had a chance to update it (as the old sidebar
+# block above the call used to) shows the *previous* run's value for one
+# full render cycle after switching modes or completing a new search --
+# which looks like the sidebar is "stuck" on a stale location.
 if "aoi" in st.session_state and st.session_state["aoi"] is not None:
-    st.success(f"AOI selected: {st.session_state.get('aoi_label', '')}")
+    aoi_label = st.session_state.get("aoi_label", "")
+    st.sidebar.success(f"AOI selected: {aoi_label}")
+    st.success(f"AOI selected: {aoi_label}")
     render_aoi_preview(st.session_state["aoi"], height=250)
 else:
+    st.sidebar.info("No AOI selected yet.")
     st.info("Select an AOI to enable analysis pages.")
