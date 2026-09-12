@@ -13,10 +13,9 @@ import matplotlib.pyplot as plt
 import xarray as xr
 from PIL import Image
 from rasterio.io import MemoryFile
-from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
 
-from core.load import load_scene
+from app.components.scene_loader import load_scene_cached
 from core.indices import compute_indices
 from core.viz import to_rgb, viz_scl
 from core.utils import resample_bands, scale_bands, apply_cloud_mask
@@ -135,24 +134,6 @@ DEFAULT_INDICES = ["ndvi", "evi", "ndmi", "nbr"]
 GRID_COLS = 3
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _load_scene_cached(
-    _item: Any,
-    aoi_wkt: str,
-    item_id: str,
-    max_dim: Optional[int],
-) -> Dict[str, Any]:
-    """
-    Cached wrapper around load_scene.
-
-    `_item` is prefixed with an underscore so Streamlit skips hashing the
-    pystac.Item object itself. The actual cache key is `item_id` + `aoi_wkt`
-    + `max_dim`.
-    """
-    aoi = shapely_wkt.loads(aoi_wkt)
-    return load_scene(_item, aoi, max_dim=max_dim)
-
-
 def _rgb_to_png_bytes(rgb: np.ndarray) -> bytes:
     buf = io.BytesIO()
     Image.fromarray(rgb).save(buf, format="PNG")
@@ -250,7 +231,7 @@ def index_display(
 
     # --- Load scene ---
     with st.spinner("Loading scene..."):
-        bands = _load_scene_cached(item, aoi.wkt, item.id, preview_max_dim)
+        bands = load_scene_cached(item, aoi.wkt, item.id, preview_max_dim)
 
     # --- Process scene ---
     with st.spinner("Processing scene..."):

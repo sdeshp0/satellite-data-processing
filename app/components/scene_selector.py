@@ -88,7 +88,11 @@ def _thumbnail_url(item: Any) -> str:
     return asset.href if asset is not None else ""
 
 
-def scene_picker(items: List[Any], key_prefix: str = "single") -> Optional[Any]:
+def scene_picker(
+    items: List[Any],
+    key_prefix: str = "single",
+    title: str = "Select a Scene",
+) -> Optional[Any]:
     """
     Render search results as a selectable table with thumbnail previews,
     acquisition date, cloud cover, and platform -- in place of a dropdown
@@ -101,6 +105,10 @@ def scene_picker(items: List[Any], key_prefix: str = "single") -> Optional[Any]:
     key_prefix : str
         Prefix for the widget key, so multiple pickers can coexist on one
         page (e.g. "before" / "after").
+    title : str
+        Subheader text above the table. Override this when more than one
+        picker appears on the same page, so it's clear which is which
+        (e.g. "Before — Select a Scene").
 
     Returns
     -------
@@ -121,8 +129,9 @@ def scene_picker(items: List[Any], key_prefix: str = "single") -> Optional[Any]:
     ]
     df = pd.DataFrame(rows)
 
-    st.subheader("Scene Selector")
-    with st.expander("Select a Scene", expanded=True):
+    st.subheader(title)
+
+    with st.expander("Available scenes", expanded=True):
         event = st.dataframe(
             df,
             column_config={
