@@ -28,13 +28,21 @@ if ROOT not in sys.path:
 from app.components.aoi_selector import render_aoi_preview
 from app.components.scene_selector import scene_selector, scene_picker
 from app.components.change_display import change_display
+from app.components.sample_analyses import sample_analysis_picker
 from core.change import EVENT_PRESETS
 
 st.title("Change Detection")
 
-# --- Require AOI from the home page ---
+# --- Sample analyses: works even without a prior AOI selection, since it
+# sets its own AOI/dates/preset and reruns the page once done. Placed
+# before the "AOI required" check below so this is a true one-click entry
+# point, not something gated behind first visiting the home page. ---
+sample_analysis_picker()
+st.divider()
+
+# --- Require AOI (either just set by a sample analysis, or from the home page) ---
 if "aoi" not in st.session_state:
-    st.warning("Please select an AOI on the home page before continuing.")
+    st.info("Select a sample analysis above, or choose an AOI on the home page.")
     st.stop()
 
 aoi = st.session_state["aoi"]
