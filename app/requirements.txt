@@ -10,5 +10,6 @@ shapely>=2.0
 matplotlib>=3.8
 pillow>=10.0
 geopy>=2.4
+requests>=2.31
 pyproj>=3.6
 pandas>=2.0

@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import math
 import json
 
+import requests
 import streamlit as st
 import leafmap.foliumap as leafmap
 from geopy.geocoders import Nominatim
@@ -51,6 +52,31 @@ SAMPLE_LOCATIONS = {
         "lat": 40.7128, "lon": -74.0060, "width_km": 30, "height_km": 30,
     },
 }
+
+
+def _geocode_locationiq(query: str, api_key: str, timeout: int = 10):
+    """
+    Forward-geocode via LocationIQ -- a hosted, Nominatim-compatible service
+    (same underlying OSM data, same result shape) built for production/cloud
+    traffic, unlike OSM's own public Nominatim instance. Free tier is
+    generous enough for a demo app; sign up at https://locationiq.com.
+
+    Returns
+    -------
+    tuple(float, float, str) or None
+        (lat, lon, display_name), or None if nothing matched.
+    """
+    response = requests.get(
+        "https://us1.locationiq.com/v1/search",
+        params={"key": api_key, "q": query, "format": "json", "limit": 1},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    results = response.json()
+    if not results:
+        return None
+    top = results[0]
+    return float(top["lat"]), float(top["lon"]), top.get("display_name", query)
 
 
 def aoi_selector() -> Tuple[Optional[Polygon], Optional[str]]:
@@ -124,11 +150,34 @@ def _sample_location_selector() -> Tuple[Optional[Polygon], Optional[str]]:
 
 def _search_location_selector() -> Tuple[Optional[Polygon], Optional[str]]:
     """
-    Free-text AOI selection via Nominatim geocoding. Unchanged from the
-    original text-search flow -- works fine in most environments, just not
-    reliably from a shared cloud host without a properly identifying
-    user agent (see the note on Nominatim below).
+    Free-text AOI selection. Uses LocationIQ if LOCATIONIQ_API_KEY is set in
+    st.secrets, otherwise falls back to free Nominatim geocoding.
+
+    The Nominatim fallback works fine in most environments, but not
+    reliably from Streamlit Community Cloud: many unrelated apps share the
+    same outbound IP ranges there, and Nominatim's usage policy
+    (https://operations.osmfoundation.org/policies/nominatim/) blocks at
+    the IP level once that shared traffic crosses its 1-request/second
+    limit -- a properly identifying user agent doesn't clear an IP-level
+    block. LocationIQ is a hosted, Nominatim-compatible service actually
+    built for this kind of traffic; see _geocode_locationiq's docstring for
+    setup. To enable it: add `LOCATIONIQ_API_KEY = "..."` to your Streamlit
+    Cloud app's Secrets (or a local .streamlit/secrets.toml for dev).
     """
+    try:
+        locationiq_key = st.secrets.get("LOCATIONIQ_API_KEY")
+    except Exception:
+        locationiq_key = None
+
+    if locationiq_key:
+        st.caption("Using LocationIQ for geocoding.")
+    else:
+        st.caption(
+            "Using free OSM Nominatim -- can be unreliable on shared cloud "
+            "hosts. Add a LOCATIONIQ_API_KEY secret for a more reliable "
+            "option, or use 'Sample locations' above."
+        )
+
     location_query = st.text_input(
         "Enter a location (city, address, landmark):",
         value=""
@@ -154,56 +203,70 @@ def _search_location_selector() -> Tuple[Optional[Polygon], Optional[str]]:
         return None, None
 
     # --- Geocoding ---
-    # Nominatim's usage policy (https://operations.osmfoundation.org/policies/nominatim/)
-    # requires a genuinely identifying user agent, ideally with real contact
-    # info -- a placeholder or generic one is a likely reason this gets
-    # rate-limited or blocked outright from a shared cloud egress IP. Make
-    # sure the value below has been swapped for a real email/URL.
-    geolocator = Nominatim(
-        user_agent="satellite-data-processing-app (contact: REPLACE_WITH_YOUR_EMAIL)",
-        timeout=10,
-    )
+    if locationiq_key:
+        try:
+            result = _geocode_locationiq(location_query, locationiq_key)
+        except Exception as e:
+            st.error(f"LocationIQ geocoding failed: {type(e).__name__}: {e}")
+            st.session_state["do_search"] = False
+            return None, None
 
-    try:
-        location = geolocator.geocode(location_query)
-    except Exception:
-        st.error(
-            "Geocoding service unavailable. This is a known issue on some "
-            "cloud hosts (e.g. Streamlit Community Cloud) -- try "
-            "'Sample locations' above instead."
+        if result is None:
+            st.error("Location not found. Try a different search.")
+            st.session_state["do_search"] = False
+            return None, None
+
+        lat, lon, display_name = result
+    else:
+        # Nominatim's usage policy requires a genuinely identifying user
+        # agent, ideally with real contact info. Make sure the value below
+        # has been swapped for a real email/URL -- but note this alone
+        # won't help if the block is at the IP level (see docstring above).
+        geolocator = Nominatim(
+            user_agent="satellite-data-processing-app for learning how to work with Satellite data"
+                       "(contact: sidprojects01@gmail.com)",
+            timeout=10,
         )
-        st.session_state["do_search"] = False
-        return None, None
 
-    if location is None:
-        st.error("Location not found. Try a different search.")
-        st.session_state["do_search"] = False
-        return None, None
+        try:
+            location = geolocator.geocode(location_query)
+        except Exception as e:
+            # Surfacing the real exception (rather than a generic message)
+            # is what lets you tell a 403/block apart from a timeout or
+            # something else entirely.
+            st.error(
+                f"Geocoding service unavailable ({type(e).__name__}: {e}). "
+                "This is a known issue on shared cloud hosts (e.g. "
+                "Streamlit Community Cloud) -- try 'Sample locations' "
+                "above, or configure a LOCATIONIQ_API_KEY secret."
+            )
+            st.session_state["do_search"] = False
+            return None, None
 
-    lat, lon = location.latitude, location.longitude
+        if location is None:
+            st.error("Location not found. Try a different search.")
+            st.session_state["do_search"] = False
+            return None, None
+
+        lat, lon, display_name = location.latitude, location.longitude, location.address
 
     # --- Convert km → degrees ---
     dlat = (height_km / 2) / 111.0
     dlon = (width_km / 2) / (111.0 * abs(math.cos(math.radians(lat))))
 
-    minx = lon - dlon
-    maxx = lon + dlon
-    miny = lat - dlat
-    maxy = lat + dlat
-
-    rect = box(minx, miny, maxx, maxy)
+    rect = box(lon - dlon, lat - dlat, lon + dlon, lat + dlat)
 
     # Save AOI globally
     st.session_state["aoi"] = rect
-    st.session_state["aoi_label"] = location.address
+    st.session_state["aoi_label"] = display_name
 
     # Reset search flag
     st.session_state["do_search"] = False
 
-    st.success(f"AOI centered on: {location.address}")
+    st.success(f"AOI centered on: {display_name}")
     st.write("Bounds:", rect.bounds)
 
-    return rect, location.address
+    return rect, display_name
 
 
 def render_aoi_preview(aoi, height: int = 350):

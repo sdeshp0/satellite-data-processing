@@ -33,4 +33,5 @@ dependencies:
   - pip
   - pip:
       - geopy>=2.4
+      - requests>=2.31
       - pyproj>=3.6
