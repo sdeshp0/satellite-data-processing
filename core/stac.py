@@ -1,5 +1,5 @@
 """
-STAC search utilities for Sentinel‑2.
+STAC search utilities for Sentinel-2.
 """
 
 from __future__ import annotations
@@ -16,9 +16,10 @@ def search_sentinel2(
     aoi: Polygon | Dict[str, Any],
     start_date: date,
     end_date: date,
+    max_cloud_cover: int = 40,
 ) -> List[Any]:
     """
-    Search Sentinel‑2 L2A items intersecting the AOI.
+    Search Sentinel-2 L2A items intersecting the AOI.
 
     Parameters
     ----------
@@ -28,6 +29,13 @@ def search_sentinel2(
         Beginning of date range.
     end_date : datetime.date
         End of date range.
+    max_cloud_cover : int
+        Maximum eo:cloud_cover percentage to include (0-100). Was
+        previously hardcoded to 40; now a parameter so callers can relax it
+        (e.g. sample_analyses' progressive-relaxation fallback) rather than
+        failing outright when a strict filter returns nothing -- this
+        matters especially for event-driven searches, since the weather
+        that causes a flood is also the weather that produces clouds.
 
     Returns
     -------
@@ -50,7 +58,7 @@ def search_sentinel2(
         collections=["sentinel-2-l2a"],
         intersects=intersects,
         datetime=f"{start_date}/{end_date}",
-        query={"eo:cloud_cover": {"lt": 40}},
+        query={"eo:cloud_cover": {"lt": max_cloud_cover}},
     )
 
     items = list(search.get_items())

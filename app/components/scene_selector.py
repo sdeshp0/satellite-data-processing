@@ -21,14 +21,16 @@ from core.stac import search_sentinel2
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _search_sentinel2_cached(aoi_wkt: str, start_date: date, end_date: date):
+def _search_sentinel2_cached(
+    aoi_wkt: str, start_date: date, end_date: date, max_cloud_cover: int = 40
+):
     """
-    Cached wrapper around search_sentinel2, keyed on AOI WKT + dates so
-    unrelated widget interactions elsewhere on the page don't retrigger a
-    fresh STAC search.
+    Cached wrapper around search_sentinel2, keyed on AOI WKT + dates +
+    max_cloud_cover so unrelated widget interactions elsewhere on the page
+    don't retrigger a fresh STAC search.
     """
     aoi = shapely_wkt.loads(aoi_wkt)
-    return search_sentinel2(aoi, start_date, end_date)
+    return search_sentinel2(aoi, start_date, end_date, max_cloud_cover=max_cloud_cover)
 
 
 def scene_selector(
@@ -61,18 +63,29 @@ def scene_selector(
     """
     st.subheader("Search Sentinel‑2 Scenes")
 
+    max_cloud_cover = st.slider(
+        "Max cloud cover (%)",
+        min_value=0, max_value=100, value=40,
+        key=f"{key_prefix}_max_cloud_cover",
+        help="Raise this if a search comes back empty -- some regions/seasons rarely have fully clear scenes.",
+    )
+
     if st.button("Search", key=f"{key_prefix}_search_button"):
         if aoi is None:
             st.warning("Please select an AOI before searching.")
             return
 
         with st.spinner("Searching STAC…"):
-            items = _search_sentinel2_cached(aoi.wkt, start_date, end_date)
+            items = _search_sentinel2_cached(aoi.wkt, start_date, end_date, max_cloud_cover)
 
         st.session_state[f"{key_prefix}_stac_items"] = items
 
         if not items:
-            st.warning("No scenes found for the selected AOI and date range.")
+            st.warning(
+                "No scenes found for the selected AOI, date range, and cloud "
+                "cover filter. Try raising the cloud cover slider or "
+                "widening the date range."
+            )
         else:
             st.success(f"Found {len(items)} scene(s).")
 

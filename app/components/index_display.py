@@ -220,6 +220,11 @@ def index_display(
         st.write(f"**Cloud cover:** {props.get('eo:cloud_cover', 'N/A')}%")
         st.write(f"**Platform:** {props.get('platform', 'N/A')}")
         st.write(f"**Sun elevation:** {props.get('view:sun_elevation', 'N/A')}")
+        st.write(
+            f"**Processing baseline:** {props.get('s2:processing_baseline', 'N/A')} "
+            "(baseline \u2265 4.00 has a radiometric offset correction "
+            "automatically applied on load)"
+        )
         st.write(f"**Bounding box:** {item.bbox}")
 
     # --- Options ---
@@ -231,7 +236,16 @@ def index_display(
 
     # --- Load scene ---
     with st.spinner("Loading scene..."):
-        bands = load_scene_cached(item, aoi.wkt, item.id, preview_max_dim)
+        bands, coverage_fraction = load_scene_cached(item, aoi.wkt, item.id, preview_max_dim)
+
+    if coverage_fraction < 0.9:
+        st.warning(
+            f"Only ~{coverage_fraction * 100:.0f}% of the AOI falls within "
+            "this scene's actual data footprint (Sentinel-2 granules aren't "
+            "always fully covered by real data at swath edges). The rest is "
+            "filled with nodata -- pick a different scene if this looks "
+            "mostly black or empty."
+        )
 
     # --- Process scene ---
     with st.spinner("Processing scene..."):

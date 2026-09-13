@@ -60,6 +60,35 @@ def align_to_reference(
     return aligned.values
 
 
+def align_bands(
+    bands: Dict[str, xr.DataArray],
+    target_ref: xr.DataArray,
+) -> Dict[str, xr.DataArray]:
+    """
+    Reproject every band in `bands` onto target_ref's grid, returning a new
+    dict with the same keys.
+
+    This must run on the RAW BANDS, not just a derived index -- aligning
+    only a computed index (as an earlier version of this module did) leaves
+    the RGB preview built from each scene's own independent grid. Two
+    scenes over the "same" AOI can come from different UTM zones, which
+    reproject the same AOI polygon to different pixel dimensions/aspect
+    ratios per scene -- both get force-displayed at the same width, so one
+    visibly looks stretched relative to the other. Aligning bands once,
+    upstream of both the RGB render and the index computation, fixes this
+    at the source instead of patching around it downstream.
+
+    Uses nearest-neighbor resampling for "scl" (categorical class codes)
+    and bilinear for continuous reflectance bands.
+    """
+    aligned: Dict[str, xr.DataArray] = {}
+    for name, da in bands.items():
+        resampling = Resampling.nearest if name == "scl" else Resampling.bilinear
+        values = align_to_reference(da.values, da, target_ref, resampling=resampling)
+        aligned[name] = _to_georeferenced(values, target_ref)
+    return aligned
+
+
 def combined_valid_mask(scl_before: xr.DataArray, scl_after: xr.DataArray) -> np.ndarray:
     """
     Boolean mask (True = usable), on scl_before's grid, requiring a pixel to

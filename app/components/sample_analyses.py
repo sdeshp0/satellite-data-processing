@@ -11,8 +11,8 @@ manually would defeat the point of a "one click" sample.
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Any, Dict
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 import math
 
 import streamlit as st
@@ -21,6 +21,43 @@ from shapely.geometry import box, Polygon
 # Reusing the existing cached STAC search rather than duplicating a second
 # cache for the same underlying query.
 from app.components.scene_selector import _search_sentinel2_cached
+
+
+# Progressive relaxation steps tried in order until a search returns
+# results. Tried first at the original date window, then -- if still
+# nothing -- retried at a widened window. Event-driven searches (a flood's
+# "after" date, in particular) are disproportionately likely to hit cloudy
+# weather right when you most want a clear scene, so failing after a
+# single strict search wastes what's often a recoverable situation.
+CLOUD_COVER_STEPS = (40, 60, 80, 100)
+DATE_WINDOW_EXPANSIONS_DAYS = (0, 30)
+
+
+def _search_with_fallback(
+    aoi_wkt: str, start: date, end: date
+) -> Tuple[List[Any], Optional[int], Optional[int]]:
+    """
+    Search with progressively relaxed cloud-cover thresholds; if still
+    empty, widen the date window symmetrically and retry the same
+    relaxation sequence.
+
+    Returns
+    -------
+    tuple(list, int or None, int or None)
+        (items, cloud_cover_used, expansion_days_used). The latter two are
+        None only when items is empty (nothing found at any relaxation
+        level tried).
+    """
+    for expand_days in DATE_WINDOW_EXPANSIONS_DAYS:
+        window_start = start - timedelta(days=expand_days)
+        window_end = end + timedelta(days=expand_days)
+
+        for cloud_pct in CLOUD_COVER_STEPS:
+            items = _search_sentinel2_cached(aoi_wkt, window_start, window_end, cloud_pct)
+            if items:
+                return items, cloud_pct, expand_days
+
+    return [], None, None
 
 
 SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
@@ -123,19 +160,27 @@ def _run_sample_analysis(key: str) -> None:
     st.session_state["after_end_date"] = after_end
 
     with st.spinner("Finding before/after scenes for this sample..."):
-        before_items = _search_sentinel2_cached(aoi.wkt, before_start, before_end)
-        after_items = _search_sentinel2_cached(aoi.wkt, after_start, after_end)
+        before_items, before_cloud, before_expand = _search_with_fallback(
+            aoi.wkt, before_start, before_end
+        )
+        after_items, after_cloud, after_expand = _search_with_fallback(
+            aoi.wkt, after_start, after_end
+        )
 
     st.session_state["before_stac_items"] = before_items
     st.session_state["after_stac_items"] = after_items
 
     if not before_items or not after_items:
+        missing = []
+        if not before_items:
+            missing.append("before")
+        if not after_items:
+            missing.append("after")
         st.session_state["sample_analysis_error"] = (
-            "Couldn't find any scenes for this sample in the configured "
-            "date ranges (the cloud-cover filter may have excluded "
-            "everything available). Try picking scenes manually below, or "
-            "run the sample again -- older Sentinel-2 coverage can be "
-            "sparse in some regions."
+            f"Couldn't find any scenes for the {', '.join(missing)} window(s), "
+            "even after relaxing the cloud-cover filter and widening the date "
+            "range. Try picking scenes manually below with a looser cloud "
+            "cover slider, or run the sample again later."
         )
         st.session_state.pop("before_stac_item", None)
         st.session_state.pop("after_stac_item", None)
@@ -148,6 +193,22 @@ def _run_sample_analysis(key: str) -> None:
         after_items, key=lambda it: it.properties.get("eo:cloud_cover", 100)
     )
     st.session_state["sample_analysis_error"] = None
+
+    # Let the user know if either side needed relaxed cloud cover or a
+    # widened window -- worth knowing, since a heavily relaxed cloud filter
+    # can mean a noticeably cloudier scene than the default 40% would give.
+    notes = []
+    if before_cloud > 40 or before_expand > 0:
+        notes.append(
+            f"Before: used cloud cover < {before_cloud}%"
+            + (f", widened by {before_expand} days" if before_expand else "")
+        )
+    if after_cloud > 40 or after_expand > 0:
+        notes.append(
+            f"After: used cloud cover < {after_cloud}%"
+            + (f", widened by {after_expand} days" if after_expand else "")
+        )
+    st.session_state["sample_analysis_relaxation_note"] = "; ".join(notes) if notes else None
 
 
 def sample_analysis_picker() -> None:
@@ -180,3 +241,7 @@ def sample_analysis_picker() -> None:
     error = st.session_state.get("sample_analysis_error")
     if error:
         st.warning(error)
+
+    note = st.session_state.get("sample_analysis_relaxation_note")
+    if note:
+        st.info(f"Note: the strict search was empty, so this used a fallback. {note}")

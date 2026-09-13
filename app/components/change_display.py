@@ -22,7 +22,7 @@ from core.indices import compute_indices
 from core.viz import to_rgb
 from core.change import (
     EVENT_PRESETS,
-    align_to_reference,
+    align_bands,
     combined_valid_mask,
     compute_delta,
     class_breakdown,
@@ -121,11 +121,82 @@ def change_display(
 
     # --- Load both scenes ---
     with st.spinner("Loading before/after scenes..."):
-        bands_before = load_scene_cached(before_item, aoi.wkt, before_item.id, preview_max_dim)
-        bands_after = load_scene_cached(after_item, aoi.wkt, after_item.id, preview_max_dim)
+        bands_before, before_coverage = load_scene_cached(
+            before_item, aoi.wkt, before_item.id, preview_max_dim
+        )
+        bands_after, after_coverage = load_scene_cached(
+            after_item, aoi.wkt, after_item.id, preview_max_dim
+        )
 
         bands_before = scale_bands(resample_bands(bands_before))
         bands_after = scale_bands(resample_bands(bands_after))
+
+        # Align "after" onto "before"'s grid HERE, before anything (RGB or
+        # indices) is derived from it. Two independently loaded scenes over
+        # the "same" AOI can come from different UTM zones and therefore
+        # different pixel dimensions -- aligning only a derived index (as an
+        # earlier version did) left the RGB preview unaligned, which is why
+        # one image could look stretched relative to the other.
+        bands_after = align_bands(bands_after, bands_before["nir"])
+
+    # --- Data coverage check ---
+    # Sentinel-2 granules aren't always fully covered by real data at swath
+    # edges. If the AOI mostly misses one scene's actual footprint, that
+    # scene renders as mostly black/empty AND -- before the boundless-read
+    # fix in core/load.py -- could produce genuinely corrupted-looking
+    # output. Coverage alone no longer causes corruption, but a low value
+    # still means real data is missing for a meaningful chunk of the AOI,
+    # so it's still worth flagging as a reason to pick a different scene.
+    if before_coverage < 0.9 or after_coverage < 0.9:
+        low = []
+        if before_coverage < 0.9:
+            low.append(f"before (~{before_coverage * 100:.0f}% coverage)")
+        if after_coverage < 0.9:
+            low.append(f"after (~{after_coverage * 100:.0f}% coverage)")
+        st.warning(
+            f"The AOI only partially falls within the real data footprint "
+            f"of the {' and '.join(low)} scene. Consider picking a "
+            "different scene for a cleaner comparison."
+        )
+
+    # --- Comparability checks: are these two scenes really apples-to-apples? ---
+    before_epsg = before_item.properties.get("proj:epsg")
+    after_epsg = after_item.properties.get("proj:epsg")
+    before_tile = before_item.properties.get("s2:mgrs_tile")
+    after_tile = after_item.properties.get("s2:mgrs_tile")
+
+    if before_epsg is not None and after_epsg is not None and before_epsg != after_epsg:
+        st.warning(
+            f"Before (EPSG:{before_epsg}) and after (EPSG:{after_epsg}) scenes "
+            "are in different UTM zones -- the after scene has been "
+            "reprojected onto the before scene's grid to allow comparison, "
+            "which introduces some resampling."
+        )
+    elif before_tile is not None and after_tile is not None and before_tile != after_tile:
+        st.caption(
+            f"Note: before ({before_tile}) and after ({after_tile}) scenes "
+            "come from different Sentinel-2 MGRS tiles (same UTM zone, "
+            "different source granule)."
+        )
+
+    # --- Sensor/baseline mismatch note ---
+    # core/load.py corrects for the large, date-dependent BOA_ADD_OFFSET
+    # shift automatically. It does NOT correct for the separate, smaller
+    # (~1.1% on VNIR bands) documented radiometric cross-calibration
+    # difference between Sentinel-2A and Sentinel-2B -- flagging when the
+    # two scenes come from different platforms so that's visible rather
+    # than silently unaddressed, without overstating it as a major issue.
+    before_platform = before_item.properties.get("platform", "unknown")
+    after_platform = after_item.properties.get("platform", "unknown")
+    if before_platform != after_platform:
+        st.caption(
+            f"Note: before ({before_platform}) and after ({after_platform}) "
+            "scenes come from different Sentinel-2 satellites. ESA applies "
+            "a small (~1.1%) cross-calibration correction between them, "
+            "which isn't independently corrected for here -- unlikely to "
+            "be the dominant signal in a dramatic change, but worth "
+            "keeping in mind for subtle comparisons."
+        )
 
     # --- RGB previews, side by side ---
     rgb_col1, rgb_col2 = st.columns(2)
@@ -142,13 +213,10 @@ def change_display(
             width="stretch",
         )
 
-    # --- Index per date, then align "after" onto "before"'s grid ---
-    # Two independently loaded scenes over the "same" AOI rarely share
-    # pixel-for-pixel identical grids, so this alignment step is required
-    # before the two dates can be directly compared.
+    # --- Index per date (both now on the same grid, since bands_after was
+    # aligned onto bands_before's grid right after loading) ---
     index_before = compute_indices(bands_before)[index_name]
-    index_after_raw = compute_indices(bands_after)[index_name]
-    index_after = align_to_reference(index_after_raw, bands_after["nir"], bands_before["nir"])
+    index_after = compute_indices(bands_after)[index_name]
 
     # --- Combined cloud mask: a pixel only counts if clear in BOTH dates ---
     valid = combined_valid_mask(bands_before["scl"], bands_after["scl"])
