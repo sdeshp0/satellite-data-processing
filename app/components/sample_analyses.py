@@ -7,6 +7,12 @@ selection, date ranges, or event presets.
 Scene selection within each sample's date range is automatic (lowest cloud
 cover available) -- asking a first-time visitor to also pick a scene
 manually would defeat the point of a "one click" sample.
+
+Coverage note: the first five samples (wildfire/flood events in coastal,
+deltaic, or storm-driven settings) are the most likely to hit swath-edge
+nodata gaps or heavy cloud cover -- see the "Added for more reliable
+coverage" section below for inland, dry-climate alternatives where clear,
+fully-covered scenes are much easier to come by.
 """
 
 from __future__ import annotations
@@ -123,6 +129,74 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "during the June-September monsoon. This shows a representative "
             "dry-season-to-monsoon transition rather than one specific "
             "flood event."
+        ),
+    },
+
+    # --- Added for more reliable coverage ---
+    # The five samples above are all coastal, deltaic, or storm-driven --
+    # exactly the geography/weather combinations most likely to hit swath-
+    # edge nodata gaps or heavy cloud cover. The four below are deliberately
+    # inland and dry-climate instead (Mediterranean, semi-arid, or desert),
+    # where fully-covered, cloud-free Sentinel-2 scenes are the norm rather
+    # than the exception.
+    "dixie_fire_2021": {
+        "label": "Dixie Fire — Plumas County, CA (Jul-Oct 2021)",
+        "preset": "wildfire",
+        "lat": 40.1401, "lon": -120.9438, "width_km": 45, "height_km": 45,
+        "before_range": (date(2021, 5, 1), date(2021, 6, 30)),
+        "after_range": (date(2021, 10, 1), date(2021, 11, 15)),
+        "description": (
+            "The Dixie Fire burned nearly 1,000,000 acres across Northern "
+            "California's interior Sierra Nevada foothills between July and "
+            "October 2021, destroying the town of Greenville -- at the "
+            "time, the second-largest single wildfire in California "
+            "history. Inland forested mountains with a dry Mediterranean "
+            "summer climate, so both dates should have clear, well-covered "
+            "scenes."
+        ),
+    },
+    "mati_greece_2018": {
+        "label": "Mati Wildfire, Greece (Jul 2018)",
+        "preset": "wildfire",
+        "lat": 38.0000, "lon": 24.0000, "width_km": 20, "height_km": 20,
+        "before_range": (date(2018, 5, 1), date(2018, 6, 30)),
+        "after_range": (date(2018, 8, 1), date(2018, 9, 15)),
+        "description": (
+            "A fast-moving wildfire struck the coastal town of Mati, near "
+            "Athens, on July 23, 2018 -- one of the deadliest wildfires in "
+            "modern Greek history. Mediterranean dry-summer climate makes "
+            "clear scenes easy to find on both sides of the event."
+        ),
+    },
+    "lake_mead_drought": {
+        "label": "Lake Mead Water Level Decline, USA (2018-2022)",
+        "preset": "flood",
+        "lat": 36.0000, "lon": -114.7000, "width_km": 45, "height_km": 45,
+        "before_range": (date(2018, 6, 1), date(2018, 7, 31)),
+        "after_range": (date(2022, 6, 1), date(2022, 7, 31)),
+        "description": (
+            "A prolonged Southwest US drought pushed Lake Mead -- the "
+            "country's largest reservoir by volume -- to its lowest water "
+            "levels since it was first filled, exposing a dramatic "
+            "\"bathtub ring\" around the shoreline. Uses the flood preset's "
+            "\"Water Loss (Recession)\" class rather than new water. Desert "
+            "climate: this is about as reliably cloud-free as Sentinel-2 "
+            "imagery gets."
+        ),
+    },
+    "gran_chaco_paraguay": {
+        "label": "Gran Chaco Deforestation, Paraguay (2018-2022)",
+        "preset": "logging",
+        "lat": -22.3000, "lon": -60.3000, "width_km": 45, "height_km": 45,
+        "before_range": (date(2018, 6, 1), date(2018, 8, 31)),
+        "after_range": (date(2022, 6, 1), date(2022, 8, 31)),
+        "description": (
+            "Paraguay's Gran Chaco is one of the fastest-deforesting regions "
+            "in the world, cleared largely for cattle ranching. Unlike "
+            "humid Amazon rainforest, the Chaco is semi-arid tropical dry "
+            "forest, with markedly less persistent cloud cover -- a better "
+            "bet for consistently clean scenes than the Rondônia sample "
+            "above."
         ),
     },
 }
