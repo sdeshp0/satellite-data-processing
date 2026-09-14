@@ -17,8 +17,8 @@ from datetime import date
 import streamlit as st
 
 # --- Ensure project root is on sys.path ---
-# streamlit_app.py does this too, but a visitor can land directly on this
-# page's URL (bookmark, shared link, fresh tab) without streamlit_app.py
+# Home.py does this too, but a visitor can land directly on this
+# page's URL (bookmark, shared link, fresh tab) without Home.py
 # having run first in that process -- without this, that hits
 # "ModuleNotFoundError: No module named 'app'".
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -15,9 +15,9 @@ from datetime import date
 import streamlit as st
 
 # --- Ensure project root is on sys.path ---
-# streamlit_app.py does this too, but on a multi-page deploy a visitor can
+# Home.py does this too, but on a multi-page deploy a visitor can
 # land directly on this page's URL (bookmark, shared link, fresh tab)
-# without streamlit_app.py ever having run first in that process --
+# without Home.py ever having run first in that process --
 # without this, that path hits "ModuleNotFoundError: No module named 'app'".
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT not in sys.path:

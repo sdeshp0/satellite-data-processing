@@ -100,7 +100,7 @@ satellite-data-processing/
 │   └── utils.py            # AOI helpers, band scaling/resampling, cloud masking
 │
 ├── app/
-│   ├── streamlit_app.py
+│   ├── Home.py
 │   ├── pages/
 │   │   ├── 01_Single_Scene.py
 │   │   └── 02_Change_Detection.py
@@ -176,7 +176,7 @@ local file there.
 ### 3. Launch Streamlit App
 
 ```bash
-streamlit run app/streamlit_app.py
+streamlit run app/Home.py
 ```
 
 This opens an interactive UI where you can:
@@ -197,7 +197,7 @@ Community Cloud or Hugging Face Spaces) rather than running locally:
   `environment.yaml` -- pip-based deploys don't read the conda manifest.
 - Every page under `app/pages/` needs its own `sys.path` bootstrap (see the
   top of `01_Single_Scene.py` / `02_Change_Detection.py`), since a visitor
-  can land directly on a page's URL without `streamlit_app.py` having run
+  can land directly on a page's URL without `Home.py` having run
   first in that process.
 - Planetary Computer's signed asset URLs are time-limited; `core/load.py`
   re-signs each href immediately before reading it, rather than relying on
