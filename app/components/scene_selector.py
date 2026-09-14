@@ -136,6 +136,9 @@ def scene_picker(
             "Preview": _thumbnail_url(item),
             "Date": item.datetime.strftime("%Y-%m-%d"),
             "Cloud cover (%)": item.properties.get("eo:cloud_cover"),
+            "NoData (%)": item.properties.get("s2:nodata_pixel_percentage"),
+            "MGRS Tile": item.properties.get("s2:mgrs_tile", "N/A"),
+            "UTM Zone": item.properties.get("proj:epsg", "N/A"),
             "Platform": item.properties.get("platform", "N/A"),
         }
         for item in items
@@ -150,6 +153,10 @@ def scene_picker(
             column_config={
                 "Preview": st.column_config.ImageColumn("Preview", width="medium"),
                 "Cloud cover (%)": st.column_config.NumberColumn(format="%.1f"),
+                "NoData (%)": st.column_config.NumberColumn(
+                    format="%.1f",
+                    help="Percentage of this scene's granule with no real data (swath-edge gaps). High values mean the AOI may fall partly outside actual coverage.",
+                ),
             },
             hide_index=True,
             width="stretch",

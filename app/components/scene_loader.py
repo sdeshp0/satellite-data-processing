@@ -6,7 +6,7 @@ its own wrapper around core.load.load_scene.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import streamlit as st
 from shapely import wkt as shapely_wkt
@@ -20,7 +20,7 @@ def load_scene_cached(
     aoi_wkt: str,
     item_id: str,
     max_dim: Optional[int],
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], float]:
     """
     Cached wrapper around load_scene.
 
@@ -28,6 +28,12 @@ def load_scene_cached(
     pystac.Item object itself (it can contain nested structures that are
     slow or unstable to hash). The actual cache key is `item_id` + `aoi_wkt`
     + `max_dim`, all cheap and stable to hash.
+
+    Returns
+    -------
+    tuple(Dict[str, Any], float)
+        (bands, coverage_fraction) -- see core.load.load_scene. Callers
+        should check coverage_fraction and warn if it's well below 1.0.
     """
     aoi = shapely_wkt.loads(aoi_wkt)
     return load_scene(_item, aoi, max_dim=max_dim)
