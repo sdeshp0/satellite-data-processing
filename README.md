@@ -10,7 +10,10 @@ Microsoft Planetary Computer. The project provides a modular pipeline for:
 - computing eight spectral indices (NDVI, EVI, SAVI, NBR, NDMI, NDWI, NDBI,
   BSI) and per-scene summary statistics
 - running before/after change detection for wildfire, flood, and logging
-  events, using established remote-sensing methodologies
+  events, using established remote-sensing methodologies, with built-in
+  checks that flagged comparisons are actually apples-to-apples
+- highlighting water, urban, vegetation, and bare-soil extent directly on a
+  scene via spectral thresholding and contour extraction
 - a set of one-click "sample analyses" against real, documented events
 - visualizing RGB, spectral indices, and change maps through a
   Streamlit-based UI
@@ -67,10 +70,67 @@ additional workflows or pages.
 - 💾 **Downloads**: delta and classification layers as georeferenced
   GeoTIFFs.
 - ⚡ **Sample analyses**: one-click, pre-configured comparisons against real
-  events (Camp Fire, Kangaroo Island bushfires, Hurricane Harvey flooding,
-  Amazon deforestation in Rondônia, and Bangladesh monsoon flooding), with
-  automatic (lowest-cloud-cover) scene selection -- no AOI or date-range
-  setup required to see a result.
+  events. The original five (Camp Fire, Kangaroo Island bushfires,
+  Hurricane Harvey flooding, Amazon deforestation in Rondônia, and
+  Bangladesh monsoon flooding) are coastal/deltaic/storm-driven and most
+  likely to hit cloud or coverage issues; four more (Dixie Fire, the Mati
+  wildfire in Greece, Lake Mead's drought-driven water-level decline, and
+  Gran Chaco deforestation in Paraguay) were added specifically for more
+  reliable, inland/dry-climate coverage. All use automatic
+  (lowest-cloud-cover) scene selection with progressive fallback --
+  relaxed cloud-cover thresholds, then a widened date window -- so a
+  single cloudy scene doesn't fail the whole sample outright.
+
+### Feature Identification (experimental)
+- 🖍️ **Spectral feature outlines**: thresholds a chosen index (NDWI, NDBI,
+  NDVI, or BSI) into a cleaned mask and traces its boundary directly on
+  the RGB image, for water/rivers, urban/built-up areas, vegetation, and
+  bare soil -- all several pixels wide at Sentinel-2's 10m resolution, so
+  well suited to this approach.
+- 🎚️ **Adjustable thresholds and minimum region size** per feature type,
+  with noisy sub-threshold blips filtered out via morphological cleanup
+  (`scikit-image`) before contours are extracted.
+- 📐 **Region stats** (count and area in km²) per feature type.
+- 💾 **Downloads**: outlines as georeferenced GeoJSON (opens directly in
+  QGIS or similar), or a single selected feature's mask as GeoTIFF.
+- 🚫 **Deliberately not attempted**: roads and individual buildings --
+  sub-pixel at 10m resolution, not reliably extractable via spectral
+  thresholding regardless of technique. A more realistic path to showing
+  road locations is overlaying real OpenStreetMap vector data as a
+  reference layer rather than deriving roads from pixels; not built yet.
+- Standalone page for now, so the threshold/contour approach can be
+  validated across different scenes before folding a version of it into
+  Single Scene (index overlay) or Change Detection (a "damage area"
+  outline derived from the classification mask).
+
+### Comparison & Data Quality Checks
+Added after finding that some before/after pairs were being compared even
+though they weren't really apples-to-apples:
+- **Radiometric offset correction**: ESA's Processing Baseline 04.00
+  (2022-01-25+) added a constant -1000 DN offset to every reflectance
+  band. Scenes processed under that baseline are corrected automatically
+  on load, so a before/after pair spanning that date isn't thrown off by a
+  large, spurious, uniform shift.
+- **Data coverage check**: Sentinel-2 granules aren't always fully covered
+  by real data at swath edges. Reads use `boundless=True` so a partially
+  out-of-bounds AOI window can no longer produce corrupted/tiled-looking
+  output (a real bug this fixed), and a computed coverage fraction is
+  surfaced as a warning whenever the AOI significantly misses a granule's
+  actual footprint.
+- **Comparability warnings**: flags when before/after scenes differ in UTM
+  zone (triggers reprojection, worth knowing about), MGRS tile (different
+  source granule), or Sentinel-2 platform (2A vs 2B carry a small
+  documented ~1.1% VNIR cross-calibration difference, not independently
+  corrected for).
+- **Scene picker visibility**: the thumbnail table shows NoData %, MGRS
+  tile, and UTM zone columns, so a bad pairing is visible before a scene
+  is even loaded, not just after.
+- **Whole-scene grid alignment**: the "after" scene's bands are aligned
+  onto the "before" scene's grid immediately after loading -- before RGB
+  rendering or index computation -- rather than aligning only a derived
+  index value, which previously left RGB previews visibly stretched
+  relative to each other when the two scenes came from different UTM
+  zones.
 
 ### Performance
 - Concurrent, GDAL-tuned COG reads (merged byte ranges, VSI caching,
@@ -96,6 +156,7 @@ satellite-data-processing/
 │   ├── indices.py        # NDVI, EVI, SAVI, NBR, NDMI, NDWI, NDBI, BSI
 │   ├── stats.py           # Band/index summary stats, SCL land-cover breakdown
 │   ├── change.py          # Grid alignment, delta, and event classification
+│   ├── features.py        # Spectral feature masks, cleanup, contour extraction
 │   ├── viz.py             # RGB percentile stretch, SCL visualization
 │   └── utils.py            # AOI helpers, band scaling/resampling, cloud masking
 │
@@ -103,7 +164,8 @@ satellite-data-processing/
 │   ├── Home.py
 │   ├── pages/
 │   │   ├── 01_Single_Scene.py
-│   │   └── 02_Change_Detection.py
+│   │   ├── 02_Change_Detection.py
+│   │   └── 03_Feature_Identification.py
 │   │
 │   ├── components/
 │   │   ├── __init__.py
@@ -112,7 +174,8 @@ satellite-data-processing/
 │   │   ├── scene_loader.py       # Shared cached scene loader
 │   │   ├── index_display.py      # RGB + spectral index charts + stats
 │   │   ├── change_display.py     # Before/after comparison rendering
-│   │   └── sample_analyses.py    # Curated one-click event comparisons
+│   │   ├── sample_analyses.py    # Curated one-click event comparisons
+│   │   └── feature_display.py    # Spectral feature identification rendering
 │   │
 │   └── requirements.txt
 │
@@ -162,8 +225,7 @@ same outbound IP ranges and Nominatim rate-limits at the IP level.
 service built for this kind of traffic, with a free tier generous enough
 for a demo app.
 
-To enable it, create `.streamlit/secrets.toml` (already gitignored --
-**never commit this file**) with:
+To enable it, create `.streamlit/secrets.toml`  with:
 
 ```toml
 LOCATIONIQ_API_KEY = "your_locationiq_token_here"
@@ -185,6 +247,8 @@ This opens an interactive UI where you can:
   statistics
 - run before/after change detection for a wildfire, flood, or logging
   event -- either manually, or via a one-click sample analysis
+- highlight water, urban, vegetation, or bare-soil outlines on a scene via
+  spectral thresholding
 
 ---
 
@@ -196,7 +260,8 @@ Community Cloud or Hugging Face Spaces) rather than running locally:
 - `rioxarray` must be in `app/requirements.txt`, not just
   `environment.yaml` -- pip-based deploys don't read the conda manifest.
 - Every page under `app/pages/` needs its own `sys.path` bootstrap (see the
-  top of `01_Single_Scene.py` / `02_Change_Detection.py`), since a visitor
+  top of `01_Single_Scene.py` / `02_Change_Detection.py` /
+  `03_Feature_Identification.py`), since a visitor
   can land directly on a page's URL without `Home.py` having run
   first in that process.
 - Planetary Computer's signed asset URLs are time-limited; `core/load.py`
