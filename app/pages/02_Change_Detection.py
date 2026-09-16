@@ -87,10 +87,12 @@ with st.sidebar:
     scene_selector(aoi, after_start, after_end, key_prefix="after")
 
 # --- AOI reference, tucked away so it doesn't dominate the page ---
+
+
 with st.expander(f"AOI preview — {aoi_label}"):
     _, preview_col, _ = st.columns([1, 2, 1])
     with preview_col:
-        render_aoi_preview(aoi, height=420)
+        render_aoi_preview(aoi, height=420, zoom=12)
 
 # --- Scene selection: before/after side by side ---
 before_col, after_col = st.columns(2)

@@ -269,7 +269,7 @@ def _search_location_selector() -> Tuple[Optional[Polygon], Optional[str]]:
     return rect, display_name
 
 
-def render_aoi_preview(aoi, height: int = 350):
+def render_aoi_preview(aoi, height: int = 350, zoom: int = 10):
     """
     Display an AOI preview map in Streamlit.
 
@@ -284,11 +284,15 @@ def render_aoi_preview(aoi, height: int = 350):
         pages should also constrain the width by placing this in a
         narrower column rather than relying on height alone -- see
         app/pages/01_Single_Scene.py for an example.
+    zoom : int
+        Initial zoom setting for the map. Previously hardcoded to 10,
+        but due to streamlit rerun issue, passed into function so callers
+        can pass in their own value
     """
 
     if aoi is None:
         return
 
-    m = leafmap.Map(center=aoi.centroid.coords[0], zoom=10)
+    m = leafmap.Map(center=aoi.centroid.coords[0], zoom=zoom)
     m.add_geojson(json.dumps(mapping(aoi)), layer_name="AOI")
     m.to_streamlit(height=height, embed=True, width=None)

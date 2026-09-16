@@ -45,7 +45,7 @@ if "aoi" in st.session_state and st.session_state["aoi"] is not None:
     aoi_label = st.session_state.get("aoi_label", "")
     st.sidebar.success(f"AOI selected: {aoi_label}")
     st.success(f"AOI selected: {aoi_label}")
-    render_aoi_preview(st.session_state["aoi"], height=250)
+    render_aoi_preview(st.session_state["aoi"], height=250, zoom=10)
 else:
     st.sidebar.info("No AOI selected yet.")
     st.info("Select an AOI to enable analysis pages.")

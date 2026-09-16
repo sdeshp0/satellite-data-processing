@@ -64,10 +64,11 @@ with st.sidebar:
 # The map is constrained to a centered column (rather than the full-width
 # container) so it renders at a reasonable aspect ratio instead of very
 # wide and very thin.
+
 with st.expander(f"AOI preview — {aoi_label}"):
     _, preview_col, _ = st.columns([1, 2, 1])
     with preview_col:
-        render_aoi_preview(aoi, height=420)
+        render_aoi_preview(aoi, height=420, zoom=12)
 
 items_key = f"{KEY_PREFIX}_stac_items"
 item_key = f"{KEY_PREFIX}_stac_item"
