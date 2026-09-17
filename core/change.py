@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date as _date
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -264,6 +264,50 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
             ))
 
     return notes
+
+
+def select_best_pair(
+    before_items: List, after_items: List
+) -> Optional[Tuple[Any, Any]]:
+    """
+    Choose the before/after pair, from two independently-searched result
+    lists, with the best comparability_score: lowest seasonal (day-of-
+    year) distance first, then lowest sun-elevation difference, with
+    combined cloud cover as the final tiebreaker.
+
+    Shared by two call sites: the Change Detection page uses this to
+    automatically pre-select a pair as soon as both searches return
+    results (the user can still override via either scene_picker table),
+    and sample_analyses.py uses it for the one-click samples. Picking each
+    side's lowest-cloud scene independently (the simpler alternative) can
+    easily land on a pair that's individually clear but seasonally or
+    illumination-mismatched -- exactly what comparability_checks warns
+    about once a pair is actually loaded.
+
+    Runs in O(len(before_items) * len(after_items)); both lists are
+    typically small (a few dozen items at most from one search window), so
+    this stays fast in practice.
+
+    Returns
+    -------
+    tuple(pystac.Item, pystac.Item) or None
+        (best_before, best_after), ranked by comparability_score, or None
+        if either list is empty.
+    """
+    if not before_items or not after_items:
+        return None
+
+    best_pair: Optional[Tuple[Any, Any]] = None
+    best_score: Optional[Tuple[float, float, float]] = None
+
+    for before in before_items:
+        for after in after_items:
+            score = comparability_score(before, after)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_pair = (before, after)
+
+    return best_pair
 
 
 def comparability_score(before_item, after_item) -> Tuple[float, float, float]:

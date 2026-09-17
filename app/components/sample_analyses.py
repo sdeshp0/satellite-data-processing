@@ -6,14 +6,15 @@ selection, date ranges, or event presets.
 
 Scene selection within each sample's date range is automatic -- asking a
 first-time visitor to also pick a scene manually would defeat the point of
-a "one click" sample. The pair is chosen jointly (see _select_best_pair)
-to favor a seasonally/illumination-matched before/after pair, using
-combined cloud cover only as a tiebreaker -- picking each side's lowest-
-cloud scene independently (the original approach) could pair a summer
-"before" with a winter "after" purely because each happened to be the
-clearest scene in its own search window, which is exactly the kind of
-mismatch core.change.comparability_checks now warns about on the
-comparison page.
+a "one click" sample. The pair is chosen jointly (see
+core.change.select_best_pair, shared with the manual Change Detection
+page's automatic pre-selection) to favor a seasonally/illumination-matched
+before/after pair, using combined cloud cover only as a tiebreaker --
+picking each side's lowest-cloud scene independently (the original
+approach) could pair a summer "before" with a winter "after" purely
+because each happened to be the clearest scene in its own search window,
+which is exactly the kind of mismatch core.change.comparability_checks
+now warns about on the comparison page.
 
 Coverage note: the first five samples (wildfire/flood events in coastal,
 deltaic, or storm-driven settings) are the most likely to hit swath-edge
@@ -34,7 +35,7 @@ from shapely.geometry import box, Polygon
 # Reusing the existing cached STAC search rather than duplicating a second
 # cache for the same underlying query.
 from app.components.scene_selector import _search_sentinel2_cached
-from core.change import comparability_score
+from core.change import select_best_pair
 
 
 # Progressive relaxation steps tried in order until a search returns
@@ -72,37 +73,6 @@ def _search_with_fallback(
                 return items, cloud_pct, expand_days
 
     return [], None, None
-
-
-def _select_best_pair(before_items: List[Any], after_items: List[Any]) -> Tuple[Any, Any]:
-    """
-    Choose the before/after pair with the best combined comparability
-    score (see core.change.comparability_score): lowest seasonal
-    day-of-year distance first, then lowest sun-elevation difference, with
-    combined cloud cover as the final tiebreaker.
-
-    This replaces picking each side's lowest-cloud scene independently --
-    that approach optimizes each date in isolation and can easily land on
-    a pair that's technically clear on both sides but seasonally or
-    illumination-mismatched (e.g. a spring "before" against a fall
-    "after"), which is exactly what would trip the new seasonal/sun-
-    elevation warnings on the comparison page.
-
-    Runs in O(len(before_items) * len(after_items)); both lists are
-    typically small (a few dozen items at most from one search window), so
-    this stays fast in practice.
-    """
-    best_pair: Optional[Tuple[Any, Any]] = None
-    best_score: Optional[Tuple[float, float, float]] = None
-
-    for before in before_items:
-        for after in after_items:
-            score = comparability_score(before, after)
-            if best_score is None or score < best_score:
-                best_score = score
-                best_pair = (before, after)
-
-    return best_pair
 
 
 SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
@@ -251,7 +221,7 @@ def _run_sample_analysis(key: str) -> None:
     """
     Populate session_state for a sample analysis: AOI, event preset,
     before/after date ranges, and an automatically-selected scene pair
-    (see _select_best_pair) for each date range.
+    (see core.change.select_best_pair) for each date range.
 
     Caller is responsible for calling st.rerun() immediately afterward, so
     that the date_input / selectbox widgets on the page -- which read their
@@ -299,7 +269,7 @@ def _run_sample_analysis(key: str) -> None:
         st.session_state.pop("after_stac_item", None)
         return
 
-    best_before, best_after = _select_best_pair(before_items, after_items)
+    best_before, best_after = select_best_pair(before_items, after_items)
     st.session_state["before_stac_item"] = best_before
     st.session_state["after_stac_item"] = best_after
     st.session_state["sample_analysis_error"] = None

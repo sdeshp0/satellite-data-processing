@@ -29,7 +29,7 @@ from app.components.aoi_selector import render_aoi_preview
 from app.components.scene_selector import scene_selector, scene_picker
 from app.components.change_display import change_display
 from app.components.sample_analyses import sample_analysis_picker
-from core.change import EVENT_PRESETS
+from core.change import EVENT_PRESETS, select_best_pair
 
 st.title("Change Detection")
 
@@ -94,6 +94,72 @@ with st.expander(f"AOI preview — {aoi_label}"):
     with preview_col:
         render_aoi_preview(aoi, height=420, zoom=12)
 
+# --- Automatic best-pair selection ---
+# As soon as both before/after searches have results, automatically
+# pre-select the pair with the best comparability score (see
+# core.change.select_best_pair) -- seasonally/illumination-matched, with
+# combined cloud cover only as a tiebreaker -- rather than leaving both
+# tables unselected and requiring a manual cross-reference before the
+# comparison can even run.
+#
+# The auto-pick is only (re-)applied when the underlying search results
+# actually change (tracked via a signature of the two result sets' item
+# IDs), not on every rerun -- otherwise it would silently overwrite a
+# manual selection on every subsequent interaction with the page. A fresh
+# search (new items on either side) does reset to a fresh auto-pick,
+# which also matches the mental model: new search results, new starting
+# point, still overridable below.
+before_items_all = st.session_state.get("before_stac_items", [])
+after_items_all = st.session_state.get("after_stac_items", [])
+
+if before_items_all and after_items_all:
+    items_signature = (
+        tuple(item.id for item in before_items_all),
+        tuple(item.id for item in after_items_all),
+    )
+    if st.session_state.get("auto_pair_signature") != items_signature:
+        st.session_state["auto_pair"] = select_best_pair(before_items_all, after_items_all)
+        st.session_state["auto_pair_signature"] = items_signature
+        auto_pair = st.session_state["auto_pair"]
+        if auto_pair is not None:
+            st.session_state["before_stac_item"], st.session_state["after_stac_item"] = auto_pair
+
+    auto_pair = st.session_state.get("auto_pair")
+    current_before = st.session_state.get("before_stac_item")
+    current_after = st.session_state.get("after_stac_item")
+
+    if current_before is not None and current_after is not None:
+        # Only call it "automatic" while the live selection still matches
+        # the computed auto-pick -- otherwise (a manual override happened
+        # in the pickers below) this would keep claiming to be automatic
+        # about a pair the user actually chose themselves.
+        is_auto_pick = (
+            auto_pair is not None
+            and current_before.id == auto_pair[0].id
+            and current_after.id == auto_pair[1].id
+        )
+        if is_auto_pick:
+            st.info(
+                "Automatically selected the best-matching pair: "
+                f"**Before** {current_before.datetime.date()} "
+                f"(cloud {current_before.properties.get('eo:cloud_cover', 0):.0f}%) / "
+                f"**After** {current_after.datetime.date()} "
+                f"(cloud {current_after.properties.get('eo:cloud_cover', 0):.0f}%) "
+                "-- ranked by seasonal and sun-angle match. Pick a different "
+                "row in the tables below to use a different scene instead."
+            )
+        else:
+            revert_note = ""
+            if auto_pair is not None:
+                revert_note = (
+                    f" (automatic best match was before {auto_pair[0].datetime.date()} "
+                    f"/ after {auto_pair[1].datetime.date()}, if you'd like to revert)"
+                )
+            st.caption(
+                f"Manually comparing before {current_before.datetime.date()} / "
+                f"after {current_after.datetime.date()}.{revert_note}"
+            )
+
 # --- Scene selection: before/after side by side ---
 # Each picker is passed the scene currently selected on the OTHER side (if
 # any) as compare_item, so its table shows Δ Day-of-Year / Δ Sun Elev
@@ -101,6 +167,11 @@ with st.expander(f"AOI preview — {aoi_label}"):
 # while still choosing, not just as a warning after the fact. On first
 # load, before either side has a selection, compare_item is simply None
 # and the table looks exactly as it did before this feature was added.
+#
+# Manual override: selecting a row here always wins, immediately -- the
+# automatic block above only writes before_stac_item/after_stac_item when
+# the search results change, so a manual pick made afterward is never
+# overwritten on a later rerun.
 before_col, after_col = st.columns(2)
 
 with before_col:
