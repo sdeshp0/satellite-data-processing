@@ -29,10 +29,13 @@ from core.viz import to_rgb
 from core.change import (
     EVENT_PRESETS,
     align_bands,
-    combined_valid_mask,
     compute_delta,
     class_breakdown,
     comparability_checks,
+    coverage_overlap,
+    COVERAGE_BOTH_CODE,
+    COVERAGE_LABELS,
+    COVERAGE_COLORS,
 )
 
 
@@ -112,8 +115,8 @@ def _rgb_array_to_png_bytes(rgb: np.ndarray) -> bytes:
 def _index_array_to_png_bytes(arr: np.ndarray, cmap_name: str, vmin: float, vmax: float) -> bytes:
     """
     Colorize a 2D index array into an RGBA PNG using the given cmap/vmin/vmax
-    (see _index_style_for). NaN pixels -- cloud-masked, or invalid in
-    either date per core.change.combined_valid_mask -- are rendered fully
+    (see _index_style_for). NaN pixels -- outside the "Both Dates" coverage
+    class per core.change.coverage_overlap -- are rendered fully
     transparent rather than a solid color, so they read as "no data" in the
     swipe comparison rather than a spurious extreme value.
     """
@@ -297,7 +300,7 @@ def change_display(
         # one image could look stretched relative to the other.
         bands_after = align_bands(bands_after, bands_before["nir"])
 
-    # --- Data coverage check ---
+    # --- Data coverage check (per scene) ---
     # Sentinel-2 granules aren't always fully covered by real data at swath
     # edges. If the AOI mostly misses one scene's actual footprint, that
     # scene renders as mostly black/empty AND -- before the boundless-read
@@ -305,6 +308,12 @@ def change_display(
     # output. Coverage alone no longer causes corruption, but a low value
     # still means real data is missing for a meaningful chunk of the AOI,
     # so it's still worth flagging as a reason to pick a different scene.
+    #
+    # This is a single geometric ratio per scene (see core.load.load_scene),
+    # computed before reading -- cheap, and a good early signal, but it
+    # can't say *where* a scene's gaps are or whether they land in the same
+    # place as the other date's gaps. That's what the joint coverage-
+    # overlap check right below this one is for.
     if before_coverage < 0.9 or after_coverage < 0.9:
         low = []
         if before_coverage < 0.9:
@@ -315,6 +324,48 @@ def change_display(
             f"The AOI only partially falls within the real data footprint "
             f"of the {' and '.join(low)} scene. Consider picking a "
             "different scene for a cleaner comparison."
+        )
+
+    # --- Data coverage overlap (joint, pixel-level) ---
+    # Two scenes can each individually look fine above (e.g. both ~95%
+    # covered) while still covering DIFFERENT parts of the AOI -- before
+    # missing the NW corner, after missing the SE corner. What actually
+    # feeds the comparison below is the pixel-wise overlap of usable
+    # (cloud-free, real-data) pixels in BOTH dates -- see
+    # core.change.coverage_overlap, which also fixes a real gap in the
+    # previous version of this check: it now excludes SCL's "No Data"
+    # class, which is also what boundless-read fill uses for AOI pixels
+    # outside a scene's real footprint. Previously those fill pixels were
+    # silently treated as valid (near-zero-reflectance) data.
+    coverage_codes, coverage_pct = coverage_overlap(bands_before["scl"], bands_after["scl"])
+
+    mismatch_pct = coverage_pct["before_only"] + coverage_pct["after_only"]
+    if mismatch_pct >= 5.0:
+        st.warning(
+            f"{mismatch_pct:.0f}% of the AOI has usable data in only ONE of "
+            f"the two dates ({coverage_pct['before_only']:.0f}% before-only, "
+            f"{coverage_pct['after_only']:.0f}% after-only). These pixels are "
+            "excluded from the comparison below -- only "
+            f"{coverage_pct['both']:.0f}% of the AOI has usable data in "
+            "BOTH dates and actually feeds the delta/classification/swipe "
+            "views. See the coverage map below for where the gaps fall."
+        )
+    elif coverage_pct["neither"] >= 10.0:
+        st.caption(
+            f"{coverage_pct['neither']:.0f}% of the AOI has no usable data "
+            "in EITHER date (cloud, shadow, or outside both scenes' real "
+            "footprint) and is excluded from the comparison below."
+        )
+
+    with st.expander("Coverage overlap map"):
+        fig_coverage = _plot_classification(
+            coverage_codes, COVERAGE_LABELS, COVERAGE_COLORS, "Data Coverage Overlap"
+        )
+        st.pyplot(fig_coverage)
+        st.caption(
+            "Where each date has usable (cloud-free, real-data) pixels. "
+            "Only the green \u201cBoth Dates\u201d area feeds the delta, "
+            "classification, and swipe-compare views below."
         )
 
     # --- Comparability checks: are these two scenes really apples-to-apples? ---
@@ -336,8 +387,11 @@ def change_display(
     index_before = compute_indices(bands_before)[index_name]
     index_after = compute_indices(bands_after)[index_name]
 
-    # --- Combined cloud mask: a pixel only counts if clear in BOTH dates ---
-    valid = combined_valid_mask(bands_before["scl"], bands_after["scl"])
+    # --- Apply the joint coverage mask: a pixel only counts if usable in
+    # BOTH dates. Reuses coverage_codes computed above (rather than a
+    # separate combined_valid_mask call) so the mask applied here is
+    # exactly the "Both Dates" class shown in the coverage map. ---
+    valid = coverage_codes == COVERAGE_BOTH_CODE
     index_before = np.where(valid, index_before, np.nan)
     index_after = np.where(valid, index_after, np.nan)
 

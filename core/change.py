@@ -42,6 +42,17 @@ from rasterio.enums import Resampling
 
 CLOUD_CLASSES = [3, 8, 9, 10, 11]  # matches core.utils.apply_cloud_mask
 
+# Sentinel-2 SCL "No Data" class. This is the genuine within-swath
+# "No Data" classification AND, not coincidentally, also what
+# core.load._read_band's boundless reads fill AOI pixels with when they
+# fall outside a granule's real footprint (fill_value=0) -- so checking
+# for this single class code catches both cases with one condition. Not
+# included in CLOUD_CLASSES above (used by core.utils.apply_cloud_mask for
+# the single-scene "mask clouds" toggle) because that's a separate,
+# narrower concern (clouds/shadow specifically); comparison code needs the
+# broader "is this pixel real data at all" check below.
+NO_DATA_CLASS = 0
+
 
 # --- Grid alignment ---------------------------------------------------------
 
@@ -101,18 +112,109 @@ def align_bands(
     return aligned
 
 
+def _scl_valid_mask(codes: np.ndarray) -> np.ndarray:
+    """
+    True where SCL codes represent real, cloud/shadow-free data -- i.e.
+    not a cloud/shadow class (CLOUD_CLASSES) and not "No Data"
+    (NO_DATA_CLASS). See NO_DATA_CLASS's docstring for why that second
+    condition matters as much as clouds do here: without it, AOI pixels
+    that fall outside a scene's real footprint (boundless-read fill) look
+    like valid near-zero-reflectance data instead of being excluded, which
+    can manufacture a spurious "change" signal in exactly the region where
+    one date doesn't actually cover the AOI.
+    """
+    return ~(np.isin(codes, CLOUD_CLASSES) | (codes == NO_DATA_CLASS))
+
+
 def combined_valid_mask(scl_before: xr.DataArray, scl_after: xr.DataArray) -> np.ndarray:
     """
     Boolean mask (True = usable), on scl_before's grid, requiring a pixel to
-    be cloud/shadow-free in BOTH dates -- a pixel that's clear before but
-    cloudy after (or vice versa) can't support a real comparison.
+    have real, cloud/shadow-free data in BOTH dates -- a pixel that's clear
+    before but cloudy (or outside the granule's real footprint) after, or
+    vice versa, can't support a real comparison. See coverage_overlap for
+    the same computation broken out spatially (where the mismatch falls)
+    and by category, rather than collapsed into a single AND mask.
     """
     scl_after_aligned = align_to_reference(
         scl_after.values, scl_after, scl_before, resampling=Resampling.nearest
     )
-    clear_before = ~np.isin(scl_before.values.astype(int), CLOUD_CLASSES)
-    clear_after = ~np.isin(scl_after_aligned.astype(int), CLOUD_CLASSES)
-    return clear_before & clear_after
+    valid_before = _scl_valid_mask(scl_before.values.astype(int))
+    valid_after = _scl_valid_mask(np.rint(scl_after_aligned).astype(int))
+    return valid_before & valid_after
+
+
+# --- Coverage overlap (spatial) ---------------------------------------------
+# Where combined_valid_mask collapses "usable in both dates" down to a
+# single AND mask (exactly what's needed to compute the delta/
+# classification), these three constants + coverage_overlap() keep the
+# four-way breakdown -- both / before-only / after-only / neither -- and
+# WHERE each falls in the AOI. Two scenes can each individually have fine
+# overall coverage (core.load.load_scene's coverage_fraction) while still
+# covering *different* parts of the AOI -- e.g. before misses the NW
+# corner, after misses the SE corner -- which a single aggregate number
+# from either scene alone can't reveal.
+COVERAGE_NEITHER_CODE = 0
+COVERAGE_BOTH_CODE = 1
+COVERAGE_BEFORE_ONLY_CODE = 2
+COVERAGE_AFTER_ONLY_CODE = 3
+
+COVERAGE_LABELS: Dict[int, str] = {
+    COVERAGE_NEITHER_CODE: "No Data (Either Date)",
+    COVERAGE_BOTH_CODE: "Usable — Both Dates",
+    COVERAGE_BEFORE_ONLY_CODE: "Usable — Before Only",
+    COVERAGE_AFTER_ONLY_CODE: "Usable — After Only",
+}
+COVERAGE_COLORS: Dict[int, str] = {
+    COVERAGE_NEITHER_CODE: "#f0f0f0",
+    COVERAGE_BOTH_CODE: "#31a354",
+    COVERAGE_BEFORE_ONLY_CODE: "#fdae6b",
+    COVERAGE_AFTER_ONLY_CODE: "#6baed6",
+}
+
+
+def coverage_overlap(
+    scl_before: xr.DataArray, scl_after: xr.DataArray
+) -> Tuple[np.ndarray, Dict[str, float]]:
+    """
+    Classify every AOI pixel (on scl_before's grid) into one of four
+    coverage categories based on per-date SCL-derived usability (see
+    _scl_valid_mask), and summarize the AOI-wide percentage in each.
+
+    Parameters
+    ----------
+    scl_before, scl_after : xr.DataArray
+        Unscaled SCL bands (see core.utils.scale_bands's exclude default).
+
+    Returns
+    -------
+    tuple(np.ndarray, dict)
+        codes : int ndarray, same shape as scl_before, valued per the
+            COVERAGE_*_CODE constants above (see COVERAGE_LABELS/COLORS
+            for display).
+        percentages : dict with keys "both", "before_only", "after_only",
+            "neither" -- percent of AOI pixels (by count) in each
+            category. "both" is exactly the AOI fraction that
+            combined_valid_mask lets through to the delta/classification.
+    """
+    scl_after_aligned = align_to_reference(
+        scl_after.values, scl_after, scl_before, resampling=Resampling.nearest
+    )
+    valid_before = _scl_valid_mask(scl_before.values.astype(int))
+    valid_after = _scl_valid_mask(np.rint(scl_after_aligned).astype(int))
+
+    codes = np.full(valid_before.shape, COVERAGE_NEITHER_CODE, dtype=int)
+    codes[valid_before & valid_after] = COVERAGE_BOTH_CODE
+    codes[valid_before & ~valid_after] = COVERAGE_BEFORE_ONLY_CODE
+    codes[~valid_before & valid_after] = COVERAGE_AFTER_ONLY_CODE
+
+    total = codes.size
+    percentages = {
+        "both": round(100 * int(np.sum(codes == COVERAGE_BOTH_CODE)) / total, 1) if total else 0.0,
+        "before_only": round(100 * int(np.sum(codes == COVERAGE_BEFORE_ONLY_CODE)) / total, 1) if total else 0.0,
+        "after_only": round(100 * int(np.sum(codes == COVERAGE_AFTER_ONLY_CODE)) / total, 1) if total else 0.0,
+        "neither": round(100 * int(np.sum(codes == COVERAGE_NEITHER_CODE)) / total, 1) if total else 0.0,
+    }
+    return codes, percentages
 
 
 # --- Comparability checks ---------------------------------------------------
