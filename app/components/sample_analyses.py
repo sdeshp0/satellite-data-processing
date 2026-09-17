@@ -4,9 +4,16 @@ before/after events with AOI + date ranges pre-configured, so a visitor can
 see a dramatic result in one click without first understanding AOI
 selection, date ranges, or event presets.
 
-Scene selection within each sample's date range is automatic (lowest cloud
-cover available) -- asking a first-time visitor to also pick a scene
-manually would defeat the point of a "one click" sample.
+Scene selection within each sample's date range is automatic -- asking a
+first-time visitor to also pick a scene manually would defeat the point of
+a "one click" sample. The pair is chosen jointly (see _select_best_pair)
+to favor a seasonally/illumination-matched before/after pair, using
+combined cloud cover only as a tiebreaker -- picking each side's lowest-
+cloud scene independently (the original approach) could pair a summer
+"before" with a winter "after" purely because each happened to be the
+clearest scene in its own search window, which is exactly the kind of
+mismatch core.change.comparability_checks now warns about on the
+comparison page.
 
 Coverage note: the first five samples (wildfire/flood events in coastal,
 deltaic, or storm-driven settings) are the most likely to hit swath-edge
@@ -27,6 +34,7 @@ from shapely.geometry import box, Polygon
 # Reusing the existing cached STAC search rather than duplicating a second
 # cache for the same underlying query.
 from app.components.scene_selector import _search_sentinel2_cached
+from core.change import comparability_score
 
 
 # Progressive relaxation steps tried in order until a search returns
@@ -64,6 +72,37 @@ def _search_with_fallback(
                 return items, cloud_pct, expand_days
 
     return [], None, None
+
+
+def _select_best_pair(before_items: List[Any], after_items: List[Any]) -> Tuple[Any, Any]:
+    """
+    Choose the before/after pair with the best combined comparability
+    score (see core.change.comparability_score): lowest seasonal
+    day-of-year distance first, then lowest sun-elevation difference, with
+    combined cloud cover as the final tiebreaker.
+
+    This replaces picking each side's lowest-cloud scene independently --
+    that approach optimizes each date in isolation and can easily land on
+    a pair that's technically clear on both sides but seasonally or
+    illumination-mismatched (e.g. a spring "before" against a fall
+    "after"), which is exactly what would trip the new seasonal/sun-
+    elevation warnings on the comparison page.
+
+    Runs in O(len(before_items) * len(after_items)); both lists are
+    typically small (a few dozen items at most from one search window), so
+    this stays fast in practice.
+    """
+    best_pair: Optional[Tuple[Any, Any]] = None
+    best_score: Optional[Tuple[float, float, float]] = None
+
+    for before in before_items:
+        for after in after_items:
+            score = comparability_score(before, after)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_pair = (before, after)
+
+    return best_pair
 
 
 SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
@@ -211,8 +250,8 @@ def _build_aoi(lat: float, lon: float, width_km: float, height_km: float) -> Pol
 def _run_sample_analysis(key: str) -> None:
     """
     Populate session_state for a sample analysis: AOI, event preset,
-    before/after date ranges, and an automatically-selected (lowest cloud
-    cover) scene for each date range.
+    before/after date ranges, and an automatically-selected scene pair
+    (see _select_best_pair) for each date range.
 
     Caller is responsible for calling st.rerun() immediately afterward, so
     that the date_input / selectbox widgets on the page -- which read their
@@ -260,17 +299,19 @@ def _run_sample_analysis(key: str) -> None:
         st.session_state.pop("after_stac_item", None)
         return
 
-    st.session_state["before_stac_item"] = min(
-        before_items, key=lambda it: it.properties.get("eo:cloud_cover", 100)
-    )
-    st.session_state["after_stac_item"] = min(
-        after_items, key=lambda it: it.properties.get("eo:cloud_cover", 100)
-    )
+    best_before, best_after = _select_best_pair(before_items, after_items)
+    st.session_state["before_stac_item"] = best_before
+    st.session_state["after_stac_item"] = best_after
     st.session_state["sample_analysis_error"] = None
 
     # Let the user know if either side needed relaxed cloud cover or a
     # widened window -- worth knowing, since a heavily relaxed cloud filter
     # can mean a noticeably cloudier scene than the default 40% would give.
+    # Note this reflects what the SEARCH needed to return any results at
+    # all, not the cloud cover of the specific pair ultimately chosen --
+    # any comparability concerns about the chosen pair itself (seasonal
+    # distance, sun elevation, UTM/tile/platform) surface separately via
+    # core.change.comparability_checks on the comparison page below.
     notes = []
     if before_cloud > 40 or before_expand > 0:
         notes.append(
@@ -295,7 +336,9 @@ def sample_analysis_picker() -> None:
     st.subheader("Try a Sample Analysis")
     st.caption(
         "Real, well-documented before/after events, pre-configured end to "
-        "end -- AOI, dates, and event type all set automatically."
+        "end -- AOI, dates, and event type all set automatically. The "
+        "before/after scene pair is chosen to be seasonally and "
+        "illumination-matched, not just individually low-cloud."
     )
 
     options = ["-- Select a sample --"] + list(SAMPLE_ANALYSES.keys())

@@ -95,6 +95,12 @@ with st.expander(f"AOI preview — {aoi_label}"):
         render_aoi_preview(aoi, height=420, zoom=12)
 
 # --- Scene selection: before/after side by side ---
+# Each picker is passed the scene currently selected on the OTHER side (if
+# any) as compare_item, so its table shows Δ Day-of-Year / Δ Sun Elev
+# relative to that scene -- a seasonal or illumination mismatch is visible
+# while still choosing, not just as a warning after the fact. On first
+# load, before either side has a selection, compare_item is simply None
+# and the table looks exactly as it did before this feature was added.
 before_col, after_col = st.columns(2)
 
 with before_col:
@@ -102,7 +108,10 @@ with before_col:
         items = st.session_state["before_stac_items"]
         if items:
             selected = scene_picker(
-                items, key_prefix="before", title="Before — Select a Scene"
+                items,
+                key_prefix="before",
+                title="Before — Select a Scene",
+                compare_item=st.session_state.get("after_stac_item"),
             )
             if selected is not None:
                 st.session_state["before_stac_item"] = selected
@@ -112,7 +121,10 @@ with after_col:
         items = st.session_state["after_stac_items"]
         if items:
             selected = scene_picker(
-                items, key_prefix="after", title="After — Select a Scene"
+                items,
+                key_prefix="after",
+                title="After — Select a Scene",
+                compare_item=st.session_state.get("before_stac_item"),
             )
             if selected is not None:
                 st.session_state["after_stac_item"] = selected

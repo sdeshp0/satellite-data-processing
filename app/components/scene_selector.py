@@ -18,6 +18,7 @@ from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
 
 from core.stac import search_sentinel2
+from core.change import day_of_year_distance, sun_elevation_diff
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -105,6 +106,7 @@ def scene_picker(
     items: List[Any],
     key_prefix: str = "single",
     title: str = "Select a Scene",
+    compare_item: Optional[Any] = None,
 ) -> Optional[Any]:
     """
     Render search results as a selectable table with thumbnail previews,
@@ -122,6 +124,14 @@ def scene_picker(
         Subheader text above the table. Override this when more than one
         picker appears on the same page, so it's clear which is which
         (e.g. "Before — Select a Scene").
+    compare_item : pystac.Item, optional
+        The scene already selected on the "other side" of a before/after
+        comparison, if any (e.g. pass the current after-scene when
+        rendering the before-picker). When given, adds "Δ Day-of-Year" and
+        "Δ Sun Elev (°)" columns computed against it, so a seasonal or
+        illumination mismatch is visible *before* committing to a pair --
+        see core.change.comparability_checks for the same checks applied
+        after a pair is fully loaded.
 
     Returns
     -------
@@ -131,8 +141,9 @@ def scene_picker(
     if not items:
         return None
 
-    rows = [
-        {
+    rows = []
+    for item in items:
+        row = {
             "Preview": _thumbnail_url(item),
             "Date": item.datetime.strftime("%Y-%m-%d"),
             "Cloud cover (%)": item.properties.get("eo:cloud_cover"),
@@ -141,23 +152,45 @@ def scene_picker(
             "UTM Zone": item.properties.get("proj:epsg", "N/A"),
             "Platform": item.properties.get("platform", "N/A"),
         }
-        for item in items
-    ]
+        if compare_item is not None:
+            row["\u0394 Day-of-Year"] = day_of_year_distance(
+                item.datetime.date(), compare_item.datetime.date()
+            )
+            elev_diff = sun_elevation_diff(item, compare_item)
+            row["\u0394 Sun Elev (\u00b0)"] = round(elev_diff, 1) if elev_diff is not None else None
+        rows.append(row)
     df = pd.DataFrame(rows)
 
     st.subheader(title)
 
+    if compare_item is not None:
+        st.caption(
+            "\u0394 Day-of-Year and \u0394 Sun Elev are shown relative to "
+            "the scene currently selected on the other side -- lower is a "
+            "closer seasonal/illumination match."
+        )
+
+    column_config = {
+        "Preview": st.column_config.ImageColumn("Preview", width="medium"),
+        "Cloud cover (%)": st.column_config.NumberColumn(format="%.1f"),
+        "NoData (%)": st.column_config.NumberColumn(
+            format="%.1f",
+            help="Percentage of this scene's granule with no real data (swath-edge gaps). High values mean the AOI may fall partly outside actual coverage.",
+        ),
+    }
+    if compare_item is not None:
+        column_config["\u0394 Day-of-Year"] = st.column_config.NumberColumn(
+            help="Circular day-of-year distance from the other side's selected scene (ignores year) -- lower means a closer seasonal match.",
+        )
+        column_config["\u0394 Sun Elev (\u00b0)"] = st.column_config.NumberColumn(
+            format="%.1f",
+            help="Absolute difference in sun elevation from the other side's selected scene -- lower means more similar shadows/illumination.",
+        )
+
     with st.expander("Available scenes", expanded=True):
         event = st.dataframe(
             df,
-            column_config={
-                "Preview": st.column_config.ImageColumn("Preview", width="medium"),
-                "Cloud cover (%)": st.column_config.NumberColumn(format="%.1f"),
-                "NoData (%)": st.column_config.NumberColumn(
-                    format="%.1f",
-                    help="Percentage of this scene's granule with no real data (swath-edge gaps). High values mean the AOI may fall partly outside actual coverage.",
-                ),
-            },
+            column_config=column_config,
             hide_index=True,
             width="stretch",
             on_select="rerun",

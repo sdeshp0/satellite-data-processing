@@ -26,6 +26,7 @@ from core.change import (
     combined_valid_mask,
     compute_delta,
     class_breakdown,
+    comparability_checks,
 )
 
 
@@ -160,43 +161,16 @@ def change_display(
         )
 
     # --- Comparability checks: are these two scenes really apples-to-apples? ---
-    before_epsg = before_item.properties.get("proj:epsg")
-    after_epsg = after_item.properties.get("proj:epsg")
-    before_tile = before_item.properties.get("s2:mgrs_tile")
-    after_tile = after_item.properties.get("s2:mgrs_tile")
-
-    if before_epsg is not None and after_epsg is not None and before_epsg != after_epsg:
-        st.warning(
-            f"Before (EPSG:{before_epsg}) and after (EPSG:{after_epsg}) scenes "
-            "are in different UTM zones -- the after scene has been "
-            "reprojected onto the before scene's grid to allow comparison, "
-            "which introduces some resampling."
-        )
-    elif before_tile is not None and after_tile is not None and before_tile != after_tile:
-        st.caption(
-            f"Note: before ({before_tile}) and after ({after_tile}) scenes "
-            "come from different Sentinel-2 MGRS tiles (same UTM zone, "
-            "different source granule)."
-        )
-
-    # --- Sensor/baseline mismatch note ---
-    # core/load.py corrects for the large, date-dependent BOA_ADD_OFFSET
-    # shift automatically. It does NOT correct for the separate, smaller
-    # (~1.1% on VNIR bands) documented radiometric cross-calibration
-    # difference between Sentinel-2A and Sentinel-2B -- flagging when the
-    # two scenes come from different platforms so that's visible rather
-    # than silently unaddressed, without overstating it as a major issue.
-    before_platform = before_item.properties.get("platform", "unknown")
-    after_platform = after_item.properties.get("platform", "unknown")
-    if before_platform != after_platform:
-        st.caption(
-            f"Note: before ({before_platform}) and after ({after_platform}) "
-            "scenes come from different Sentinel-2 satellites. ESA applies "
-            "a small (~1.1%) cross-calibration correction between them, "
-            "which isn't independently corrected for here -- unlikely to "
-            "be the dominant signal in a dramatic change, but worth "
-            "keeping in mind for subtle comparisons."
-        )
+    # Covers UTM zone, MGRS tile, platform, seasonal (day-of-year) distance,
+    # and sun elevation -- see core.change.comparability_checks. Consolidated
+    # there (rather than inline here) so the same logic can also score
+    # candidate pairs before one is picked; see scene_selector.scene_picker's
+    # compare_item option and sample_analyses.py's automatic pair selection.
+    for note in comparability_checks(before_item, after_item):
+        if note.severity == "warning":
+            st.warning(note.message)
+        else:
+            st.caption(note.message)
 
     # --- RGB previews, side by side ---
     rgb_col1, rgb_col2 = st.columns(2)

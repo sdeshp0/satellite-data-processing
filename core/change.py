@@ -15,11 +15,23 @@ event-specific classification using established remote-sensing methodologies.
   pixels beyond k standard deviations from the AOI's own mean delta. A
   standard, index-agnostic image-differencing change-detection method,
   usable for any of the 8 indices without a domain-specific threshold.
+
+Also includes before/after *comparability* checks (core.change.comparability_checks
+and comparability_score) -- a scene pair can be geometrically alignable
+(see align_bands below) while still not being apples-to-apples: different
+UTM zones/tiles, different platforms, different season, or different sun
+angle can all introduce a signal that looks like "change" but isn't. These
+checks are shared between app/components/change_display.py (surfacing
+warnings for a pair the user already picked) and
+app/components/sample_analyses.py / scene_selector.py (scoring/selecting
+or flagging pairs before comparison even runs).
 """
 
 from __future__ import annotations
 
-from typing import Dict
+from dataclasses import dataclass
+from datetime import date as _date
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -101,6 +113,185 @@ def combined_valid_mask(scl_before: xr.DataArray, scl_after: xr.DataArray) -> np
     clear_before = ~np.isin(scl_before.values.astype(int), CLOUD_CLASSES)
     clear_after = ~np.isin(scl_after_aligned.astype(int), CLOUD_CLASSES)
     return clear_before & clear_after
+
+
+# --- Comparability checks ---------------------------------------------------
+# Whether a before/after pair is really apples-to-apples, independent of
+# whether their grids can be geometrically aligned (align_bands handles
+# that separately). Consolidated here (rather than left inline in
+# change_display.py) so the same logic can also *score* candidate pairs
+# before one is picked -- see comparability_score, used by
+# sample_analyses.py -- and so scene_selector.py's picker table can surface
+# it too.
+
+@dataclass
+class ComparabilityNote:
+    """One comparability finding for a before/after scene pair."""
+    severity: str  # "warning" (likely to matter) or "info" (worth knowing)
+    message: str
+
+
+# Seasonal (day-of-year) distance thresholds, in days. Below INFO, no note
+# at all. Between INFO and WARNING, a caption -- worth knowing but not
+# necessarily a problem (many legitimate comparisons, e.g. a multi-year
+# deforestation pair, are seasonally close despite being years apart in
+# raw date). At or above WARNING, normal vegetation cycling / wet-dry
+# season / snow cover differences are large enough to plausibly be mistaken
+# for the event itself.
+SEASONAL_INFO_DAYS = 20
+SEASONAL_WARNING_DAYS = 45
+
+# Sun elevation angle (degrees) thresholds. A large difference changes
+# shadow length/direction and terrain shading independent of any real
+# surface change -- most visible in hilly terrain or wherever tall
+# vegetation/structures cast shadows across the AOI.
+SUN_ELEV_INFO_DEG = 10.0
+SUN_ELEV_WARNING_DEG = 20.0
+
+
+def day_of_year_distance(date_before: _date, date_after: _date) -> int:
+    """
+    Circular day-of-year distance between two dates, ignoring year -- e.g.
+    Dec 28 vs Jan 5 is 8 days apart seasonally, not ~358. This is what
+    matters for phenological/seasonal comparability, as opposed to the
+    literal elapsed time between the two acquisitions (which is often
+    large and *expected*, e.g. a deforestation comparison spanning several
+    years by design).
+    """
+    doy_before = date_before.timetuple().tm_yday
+    doy_after = date_after.timetuple().tm_yday
+    diff = abs(doy_after - doy_before)
+    return min(diff, 365 - diff)
+
+
+def sun_elevation_diff(before_item, after_item) -> Optional[float]:
+    """
+    Absolute difference in view:sun_elevation (degrees) between two STAC
+    items, or None if either item lacks the field.
+    """
+    before_elev = before_item.properties.get("view:sun_elevation")
+    after_elev = after_item.properties.get("view:sun_elevation")
+    if before_elev is None or after_elev is None:
+        return None
+    return abs(float(after_elev) - float(before_elev))
+
+
+def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
+    """
+    Run all before/after comparability checks and return their findings, in
+    a fixed order (roughly most-likely-to-matter first): UTM zone, MGRS
+    tile, platform, seasonal (day-of-year) distance, sun elevation.
+
+    Parameters
+    ----------
+    before_item, after_item : pystac.Item
+
+    Returns
+    -------
+    list of ComparabilityNote
+    """
+    notes: List[ComparabilityNote] = []
+
+    before_epsg = before_item.properties.get("proj:epsg")
+    after_epsg = after_item.properties.get("proj:epsg")
+    before_tile = before_item.properties.get("s2:mgrs_tile")
+    after_tile = after_item.properties.get("s2:mgrs_tile")
+
+    if before_epsg is not None and after_epsg is not None and before_epsg != after_epsg:
+        notes.append(ComparabilityNote(
+            "warning",
+            f"Before (EPSG:{before_epsg}) and after (EPSG:{after_epsg}) scenes "
+            "are in different UTM zones -- the after scene has been "
+            "reprojected onto the before scene's grid to allow comparison, "
+            "which introduces some resampling.",
+        ))
+    elif before_tile is not None and after_tile is not None and before_tile != after_tile:
+        notes.append(ComparabilityNote(
+            "info",
+            f"Before ({before_tile}) and after ({after_tile}) scenes come "
+            "from different Sentinel-2 MGRS tiles (same UTM zone, "
+            "different source granule).",
+        ))
+
+    before_platform = before_item.properties.get("platform", "unknown")
+    after_platform = after_item.properties.get("platform", "unknown")
+    if before_platform != after_platform:
+        notes.append(ComparabilityNote(
+            "info",
+            f"Before ({before_platform}) and after ({after_platform}) "
+            "scenes come from different Sentinel-2 satellites. ESA applies "
+            "a small (~1.1%) cross-calibration correction between them, "
+            "which isn't independently corrected for here -- unlikely to "
+            "be the dominant signal in a dramatic change, but worth "
+            "keeping in mind for subtle comparisons.",
+        ))
+
+    doy_dist = day_of_year_distance(before_item.datetime.date(), after_item.datetime.date())
+    if doy_dist >= SEASONAL_WARNING_DAYS:
+        notes.append(ComparabilityNote(
+            "warning",
+            f"Before and after scenes are ~{doy_dist} days apart in the "
+            "seasonal calendar (ignoring year). Normal vegetation cycling, "
+            "snow cover, or wet/dry season differences can look like the "
+            "event itself -- consider picking scenes closer in "
+            "day-of-year, if available.",
+        ))
+    elif doy_dist >= SEASONAL_INFO_DAYS:
+        notes.append(ComparabilityNote(
+            "info",
+            f"Before and after scenes are ~{doy_dist} days apart in the "
+            "seasonal calendar (ignoring year) -- worth keeping in mind "
+            "for anything sensitive to seasonal vegetation change.",
+        ))
+
+    elev_diff = sun_elevation_diff(before_item, after_item)
+    if elev_diff is not None:
+        if elev_diff >= SUN_ELEV_WARNING_DEG:
+            notes.append(ComparabilityNote(
+                "warning",
+                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0 between "
+                "the two scenes. This changes shadow length/direction and "
+                "terrain shading independent of any real surface change -- "
+                "most noticeable in hilly terrain or areas with tall "
+                "vegetation/structures.",
+            ))
+        elif elev_diff >= SUN_ELEV_INFO_DEG:
+            notes.append(ComparabilityNote(
+                "info",
+                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0 between "
+                "the two scenes -- shadows will look somewhat different "
+                "between dates.",
+            ))
+
+    return notes
+
+
+def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
+    """
+    Sortable score for ranking candidate before/after pairs -- lower is
+    better on every component, and the tuple is meant to be used directly
+    with min()/sorted(). Used by sample_analyses.py to pick a pair that is
+    seasonally/illumination-matched, rather than picking each side's
+    lowest-cloud scene independently (which could pair a summer "before"
+    with a winter "after" purely because each happened to be the clearest
+    scene in its own search window).
+
+    Returns
+    -------
+    tuple(float, float, float)
+        (day_of_year_distance, sun_elevation_diff_or_0, combined_cloud_cover)
+        Seasonal and illumination match are prioritized first (they're the
+        harder-to-fix, more distorting mismatches); combined cloud cover
+        is the final tiebreaker among otherwise-similar pairs.
+    """
+    doy_dist = day_of_year_distance(before_item.datetime.date(), after_item.datetime.date())
+    elev_diff = sun_elevation_diff(before_item, after_item)
+    elev_component = elev_diff if elev_diff is not None else 0.0
+    cloud = (
+        before_item.properties.get("eo:cloud_cover", 100)
+        + after_item.properties.get("eo:cloud_cover", 100)
+    )
+    return (float(doy_dist), float(elev_component), float(cloud))
 
 
 # --- Delta -------------------------------------------------------------------
