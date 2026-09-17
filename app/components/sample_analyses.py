@@ -16,11 +16,14 @@ because each happened to be the clearest scene in its own search window,
 which is exactly the kind of mismatch core.change.comparability_checks
 now warns about on the comparison page.
 
-Coverage note: the first five samples (wildfire/flood events in coastal,
-deltaic, or storm-driven settings) are the most likely to hit swath-edge
-nodata gaps or heavy cloud cover -- see the "Added for more reliable
-coverage" section below for inland, dry-climate alternatives where clear,
-fully-covered scenes are much easier to come by.
+Coverage note: the wildfire/flood/deforestation samples in coastal,
+deltaic, or storm-driven settings near the top of SAMPLE_ANALYSES are the
+most likely to hit swath-edge nodata gaps or heavy cloud cover -- see the
+"Added for more reliable coverage" section below for inland, dry-climate
+(or otherwise less cloud-prone) alternatives, including several flood
+samples added specifically for this reason after the original
+Ganges-Brahmaputra Delta monsoon-flood sample was removed for its own
+unreliable coverage.
 """
 
 from __future__ import annotations
@@ -127,27 +130,20 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "can't."
         ),
     },
-    "bangladesh_monsoon_flood": {
-        "label": "Monsoon Flooding — Ganges-Brahmaputra Delta, Bangladesh",
-        "preset": "flood",
-        "lat": 23.6850, "lon": 90.3563, "width_km": 60, "height_km": 60,
-        "before_range": (date(2022, 3, 1), date(2022, 4, 30)),
-        "after_range": (date(2022, 7, 15), date(2022, 8, 31)),
-        "description": (
-            "Bangladesh's low-lying delta floods seasonally every year "
-            "during the June-September monsoon. This shows a representative "
-            "dry-season-to-monsoon transition rather than one specific "
-            "flood event."
-        ),
-    },
 
     # --- Added for more reliable coverage ---
-    # The five samples above are all coastal, deltaic, or storm-driven --
+    # The four samples above are all coastal, deltaic, or storm-driven --
     # exactly the geography/weather combinations most likely to hit swath-
-    # edge nodata gaps or heavy cloud cover. The four below are deliberately
-    # inland and dry-climate instead (Mediterranean, semi-arid, or desert),
-    # where fully-covered, cloud-free Sentinel-2 scenes are the norm rather
-    # than the exception.
+    # edge nodata gaps or heavy cloud cover. The seven below are
+    # deliberately inland and dry-climate (or otherwise less cloud-prone)
+    # instead -- Mediterranean, semi-arid, desert, or continental --
+    # where fully-covered, cloud-free Sentinel-2 scenes are much easier to
+    # come by. This includes three flood samples added specifically to
+    # replace the original Ganges-Brahmaputra Delta monsoon-flood sample,
+    # which was removed after its actual coverage (checked pixel-by-pixel
+    # via core.change.coverage_overlap once loaded) turned out to be far
+    # too low for a usable comparison -- exactly the coastal/deltaic/
+    # monsoon risk this section exists to avoid.
     "dixie_fire_2021": {
         "label": "Dixie Fire — Plumas County, CA (Jul-Oct 2021)",
         "preset": "wildfire",
@@ -208,7 +204,55 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "above."
         ),
     },
+    "missouri_river_flood_2019": {
+        "label": "Missouri River Flooding — Nebraska/Iowa, USA (Mar 2019)",
+        "preset": "flood",
+        "lat": 40.6708, "lon": -95.8608, "width_km": 45, "height_km": 45,
+        "before_range": (date(2019, 1, 15), date(2019, 2, 28)),
+        "after_range": (date(2019, 3, 15), date(2019, 4, 15)),
+        "description": (
+            "A mid-March 2019 \"bomb cyclone\" dropped heavy rain onto "
+            "already-frozen, snow-covered ground across Nebraska and Iowa, "
+            "triggering catastrophic, fast-moving flooding along the "
+            "Missouri River -- among the costliest U.S. flood events on "
+            "record at the time. Inland continental climate, unlike the "
+            "coastal/deltaic samples above, so clear scenes on both sides "
+            "of the event are comparatively easy to find."
+        ),
+    },
+    "murray_darling_flood_2022": {
+        "label": "Murray-Darling Basin Flooding — Central West NSW, Australia (Nov 2022)",
+        "preset": "flood",
+        "lat": -33.3833, "lon": 148.0000, "width_km": 45, "height_km": 45,
+        "before_range": (date(2022, 6, 1), date(2022, 7, 31)),
+        "after_range": (date(2022, 11, 1), date(2022, 11, 30)),
+        "description": (
+            "Repeated La Ni\u00f1a-driven rainfall through 2022 pushed the "
+            "Lachlan and wider Murray-Darling river system to record "
+            "levels, flooding towns across central west New South Wales "
+            "in November 2022. Semi-arid inland Australia sees markedly "
+            "less persistent cloud than the monsoon-delta setting the "
+            "Ganges-Brahmaputra sample was removed for."
+        ),
+    },
+    "pantanal_flood_pulse": {
+        "label": "Pantanal Seasonal Flood Pulse, Brazil (Dry \u2192 Wet Season)",
+        "preset": "flood",
+        "lat": -17.7000, "lon": -57.6000, "width_km": 45, "height_km": 45,
+        "before_range": (date(2021, 8, 1), date(2021, 9, 30)),
+        "after_range": (date(2022, 2, 1), date(2022, 3, 15)),
+        "description": (
+            "The Pantanal, the world's largest tropical wetland, floods "
+            "predictably every year as its rivers overflow during the wet "
+            "season -- a natural, recurring \"flood pulse\" rather than a "
+            "single disaster event, similar in spirit to the Bangladesh "
+            "sample that was removed but in a tropical-savanna climate "
+            "rather than a full monsoon delta, which keeps cloud cover "
+            "considerably more manageable."
+        ),
+    },
 }
+
 
 
 def _build_aoi(lat: float, lon: float, width_km: float, height_km: float) -> Polygon:
