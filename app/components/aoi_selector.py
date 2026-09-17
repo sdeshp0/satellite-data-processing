@@ -53,6 +53,18 @@ SAMPLE_LOCATIONS = {
     },
 }
 
+# Default AOI width/height (km) for the "Search by name" path, applied
+# before the user has touched the width/height inputs. Previously 10km --
+# raised to 20km to roughly match the smallest of the curated
+# SAMPLE_LOCATIONS above (30-60km) rather than sitting well below all of
+# them, and because a smaller AOI is disproportionately likely to fall
+# entirely within a single UTM zone/MGRS tile and away from a swath edge --
+# both of which core.change.comparability_checks and
+# app/components/change_display.py's coverage check flag as issues when a
+# before/after pair straddles them. Still user-adjustable via the
+# width/height number inputs; this only changes the starting value.
+DEFAULT_SEARCH_AOI_KM = 20.0
+
 
 def _geocode_locationiq(query: str, api_key: str, timeout: int = 10):
     """
@@ -185,10 +197,17 @@ def _search_location_selector() -> Tuple[Optional[Polygon], Optional[str]]:
 
     col1, col2 = st.columns(2)
     width_km = col1.number_input(
-        "AOI width (km)", min_value=1.0, max_value=200.0, value=10.0
+        "AOI width (km)", min_value=1.0, max_value=200.0, value=DEFAULT_SEARCH_AOI_KM
     )
     height_km = col2.number_input(
-        "AOI height (km)", min_value=1.0, max_value=200.0, value=10.0
+        "AOI height (km)", min_value=1.0, max_value=200.0, value=DEFAULT_SEARCH_AOI_KM
+    )
+    st.caption(
+        f"Defaults to {DEFAULT_SEARCH_AOI_KM:.0f}km \u00d7 {DEFAULT_SEARCH_AOI_KM:.0f}km -- "
+        "large enough for useful context, small enough to reduce the "
+        "chance of straddling a UTM zone/tile boundary or a scene's swath "
+        "edge. Adjust freely; a change-detection comparison will flag "
+        "UTM/tile mismatches and low data coverage either way."
     )
 
     # --- Search trigger ---
