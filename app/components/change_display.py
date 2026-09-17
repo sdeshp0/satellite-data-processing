@@ -15,8 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import ListedColormap
-from matplotlib.patches import Patch
+from matplotlib.colors import ListedColormap, BoundaryNorm
 from PIL import Image
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
@@ -71,23 +70,31 @@ def _array_to_geotiff_bytes(arr: np.ndarray, reference) -> bytes:
 
 def _plot_classification(codes: np.ndarray, labels, colors, title: str):
     """
-    Render a discrete classification map with a matching legend. codes < 0
-    (masked/invalid pixels) are shown as transparent.
+    Render a discrete classification map with a matching legend, sized and
+    laid out the same way as the delta map next to it (see the
+    fig.colorbar(..., shrink=0.7) call in change_display) -- a discrete
+    colorbar with one tick+label per class, rather than a separate legend
+    block below the axes. The old below-plot legend's height grew with the
+    number of classes (3 for flood/logging, 7 for dNBR), which made the
+    two side-by-side map images end up different sizes/aspect ratios
+    depending on the event preset; a colorbar occupies a fixed-shape strip
+    beside the axes regardless of class count, matching the delta map's
+    layout exactly. codes < 0 (masked/invalid pixels) are shown as
+    transparent.
     """
     ordered = sorted(labels.keys())
     cmap = ListedColormap([colors[c] for c in ordered])
+    bounds = [c - 0.5 for c in ordered] + [ordered[-1] + 0.5]
+    norm = BoundaryNorm(bounds, cmap.N)
     display = np.ma.masked_where(codes < 0, codes)
 
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(display, cmap=cmap, vmin=min(ordered), vmax=max(ordered))
+    im = ax.imshow(display, cmap=cmap, norm=norm)
     ax.set_title(title, fontsize=11)
     ax.axis("off")
 
-    handles = [Patch(color=colors[c], label=labels[c]) for c in ordered]
-    ax.legend(
-        handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.02),
-        ncol=1, fontsize=8, frameon=False,
-    )
+    cbar = fig.colorbar(im, ax=ax, shrink=0.7, ticks=ordered)
+    cbar.ax.set_yticklabels([labels[c] for c in ordered], fontsize=7)
     return fig
 
 
