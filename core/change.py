@@ -309,10 +309,13 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
         ))
     elif before_tile is not None and after_tile is not None and before_tile != after_tile:
         notes.append(ComparabilityNote(
-            "info",
+            "warning",
             f"Before ({before_tile}) and after ({after_tile}) scenes come "
-            "from different Sentinel-2 MGRS tiles (same UTM zone, "
-            "different source granule).",
+            "from different Sentinel-2 MGRS tiles. If the AOI sits near "
+            "the tile boundary, the two scenes can cover substantially "
+            "different ground within it -- check the coverage-overlap "
+            "map below for how much of the AOI is actually usable in "
+            "both dates, not just each scene's own coverage.",
         ))
 
     before_platform = before_item.properties.get("platform", "unknown")
@@ -419,9 +422,11 @@ def select_best_pair(
 ) -> Optional[Tuple[Any, Any]]:
     """
     Choose the before/after pair, from two independently-searched result
-    lists, with the best comparability_score: lowest seasonal (day-of-
-    year) distance first, then lowest sun-elevation difference, with
-    combined cloud cover as the final tiebreaker.
+    lists, with the best comparability_score: matching MGRS tile first
+    (see comparability_score's docstring for why this outranks everything
+    else), then lowest seasonal (day-of-year) distance, then lowest
+    sun-elevation difference, with combined cloud cover as the final
+    tiebreaker.
 
     Each list is first filtered to granule_coverage_pct >=
     min_coverage_before / min_coverage_after respectively (see
@@ -471,24 +476,49 @@ def select_best_pair(
     return best_pair
 
 
-def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
+def comparability_score(before_item, after_item) -> Tuple[float, float, float, float]:
     """
     Sortable score for ranking candidate before/after pairs -- lower is
     better on every component, and the tuple is meant to be used directly
-    with min()/sorted(). Used by sample_analyses.py to pick a pair that is
-    seasonally/illumination-matched, rather than picking each side's
-    lowest-cloud scene independently (which could pair a summer "before"
-    with a winter "after" purely because each happened to be the clearest
-    scene in its own search window).
+    with min()/sorted(). Used by sample_analyses.py and the Change
+    Detection page's automatic pre-selection to pick a pair that's
+    genuinely comparable, rather than picking each side's lowest-cloud
+    scene independently (which could pair a summer "before" with a winter
+    "after" purely because each happened to be the clearest scene in its
+    own search window).
+
+    MGRS tile match is checked FIRST, ahead of season/sun-angle/cloud.
+    Sentinel-2 tiles sit on a fixed ~110km grid, and an AOI anywhere near a
+    tile boundary can end up with before/after scenes drawn from different
+    tiles -- which means the two scenes can be looking at substantially
+    different ground within the AOI, not just under different conditions.
+    In practice this turned out to be the single biggest driver of poor
+    before/after coverage overlap (see core.change.coverage_overlap):
+    scenes from mismatched tiles routinely lost 60-95% of the AOI to
+    "usable in only one date", even with 0% cloud cover on both sides,
+    while a same-tile pair with a much worse seasonal/sun-angle match
+    still covered the AOI fine. A seasonal or illumination mismatch
+    degrades comparison quality; a tile mismatch can make large parts of
+    the AOI simply unavailable to compare at all -- worth fixing first
+    whenever a same-tile alternative exists in the search results (Sentinel
+    -2's ~5-day revisit usually means one does).
 
     Returns
     -------
-    tuple(float, float, float)
-        (day_of_year_distance, sun_elevation_diff_or_0, combined_cloud_cover)
-        Seasonal and illumination match are prioritized first (they're the
-        harder-to-fix, more distorting mismatches); combined cloud cover
-        is the final tiebreaker among otherwise-similar pairs.
+    tuple(float, float, float, float)
+        (tile_mismatch, day_of_year_distance, sun_elevation_diff_or_0,
+        combined_cloud_cover). tile_mismatch is 0.0 if both items report
+        the same s2:mgrs_tile, else 1.0 (including when either is
+        missing -- treated as "can't confirm a match", not as a match).
+        Season and illumination match are prioritized next (they're
+        harder-to-fix, more distorting mismatches than cloud cover);
+        combined cloud cover is the final tiebreaker among otherwise-
+        similar pairs.
     """
+    tile_before = before_item.properties.get("s2:mgrs_tile")
+    tile_after = after_item.properties.get("s2:mgrs_tile")
+    tile_mismatch = 0.0 if (tile_before is not None and tile_before == tile_after) else 1.0
+
     doy_dist = day_of_year_distance(before_item.datetime.date(), after_item.datetime.date())
     elev_diff = sun_elevation_diff(before_item, after_item)
     elev_component = elev_diff if elev_diff is not None else 0.0
@@ -496,7 +526,7 @@ def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
         before_item.properties.get("eo:cloud_cover", 100)
         + after_item.properties.get("eo:cloud_cover", 100)
     )
-    return (float(doy_dist), float(elev_component), float(cloud))
+    return (tile_mismatch, float(doy_dist), float(elev_component), float(cloud))
 
 
 # --- Delta -------------------------------------------------------------------
