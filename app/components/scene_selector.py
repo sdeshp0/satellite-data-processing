@@ -107,6 +107,7 @@ def scene_picker(
     key_prefix: str = "single",
     title: str = "Select a Scene",
     compare_item: Optional[Any] = None,
+    default_min_coverage: int = 50,
 ) -> Optional[Any]:
     """
     Render search results as a selectable table with thumbnail previews,
@@ -132,6 +133,10 @@ def scene_picker(
         illumination mismatch is visible *before* committing to a pair --
         see core.change.comparability_checks for the same checks applied
         after a pair is fully loaded.
+    default_min_coverage : int
+        Initial position (percent) of the "Minimum coverage" slider that
+        filters out low-coverage scenes before they're shown. See that
+        slider's help text for what "coverage" means here.
 
     Returns
     -------
@@ -141,8 +146,52 @@ def scene_picker(
     if not items:
         return None
 
+    st.subheader(title)
+
+    min_coverage = st.slider(
+        "Minimum coverage (%)",
+        min_value=0, max_value=100, value=default_min_coverage,
+        key=f"{key_prefix}_min_coverage",
+        help=(
+            "Hides scenes below this granule-level coverage (100% minus "
+            "Sentinel-2's own s2:nodata_pixel_percentage property). This "
+            "is coverage of the WHOLE scene, not specifically your AOI -- "
+            "a scene can clear this filter and still only partially cover "
+            "the AOI, or vice versa, since a small AOI can sit entirely "
+            "within a mostly-empty granule's one good corner. The "
+            "AOI-specific check happens after you load a scene (see the "
+            "coverage warnings and coverage-overlap map once a "
+            "before/after comparison is run). Scenes with no coverage "
+            "metadata reported are never hidden by this filter."
+        ),
+    )
+
+    def _granule_coverage_pct(item: Any) -> Optional[float]:
+        nodata_pct = item.properties.get("s2:nodata_pixel_percentage")
+        if nodata_pct is None:
+            return None
+        return 100.0 - float(nodata_pct)
+
+    visible_items = [
+        item for item in items
+        if (cov := _granule_coverage_pct(item)) is None or cov >= min_coverage
+    ]
+    hidden_count = len(items) - len(visible_items)
+    if hidden_count:
+        st.caption(
+            f"Hiding {hidden_count} of {len(items)} scene(s) below "
+            f"{min_coverage}% coverage. Lower the slider to see them."
+        )
+
+    if not visible_items:
+        st.warning(
+            f"No scenes meet the {min_coverage}% coverage threshold. "
+            "Lower the slider to see the hidden scene(s)."
+        )
+        return None
+
     rows = []
-    for item in items:
+    for item in visible_items:
         row = {
             "Preview": _thumbnail_url(item),
             "Date": item.datetime.strftime("%Y-%m-%d"),
@@ -160,8 +209,6 @@ def scene_picker(
             row["\u0394 Sun Elev (\u00b0)"] = round(elev_diff, 1) if elev_diff is not None else None
         rows.append(row)
     df = pd.DataFrame(rows)
-
-    st.subheader(title)
 
     if compare_item is not None:
         st.caption(
@@ -203,4 +250,4 @@ def scene_picker(
             st.caption("Select a row above to load that scene.")
             return None
 
-    return items[selected_rows[0]]
+    return visible_items[selected_rows[0]]
