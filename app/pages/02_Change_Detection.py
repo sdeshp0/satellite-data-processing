@@ -102,23 +102,43 @@ with st.expander(f"AOI preview — {aoi_label}"):
 # tables unselected and requiring a manual cross-reference before the
 # comparison can even run.
 #
-# The auto-pick is only (re-)applied when the underlying search results
-# actually change (tracked via a signature of the two result sets' item
-# IDs), not on every rerun -- otherwise it would silently overwrite a
+# The auto-pick is only (re-)applied when the underlying search results OR
+# either coverage-slider value actually change (tracked via a signature
+# below), not on every rerun -- otherwise it would silently overwrite a
 # manual selection on every subsequent interaction with the page. A fresh
-# search (new items on either side) does reset to a fresh auto-pick,
-# which also matches the mental model: new search results, new starting
-# point, still overridable below.
+# search (new items on either side), or moving either "Minimum coverage"
+# slider in the pickers below, does reset to a fresh auto-pick, matching
+# the mental model: new inputs, new starting point, still overridable.
+#
+# The coverage values are read from session_state under the SAME widget
+# keys scene_picker's "Minimum coverage" sliders use (f"{key_prefix}_min_
+# coverage") -- Streamlit updates session_state for a widget's key as soon
+# as the user interacts with it, before the script reruns, so this sees
+# the current slider position even though this block runs earlier in the
+# script than the sliders themselves. Before either slider has ever been
+# rendered (e.g. right after a fresh search), the .get(..., 50) fallback
+# matches the sliders' own default, so the very first auto-pick is
+# consistent with what the sliders will show once they do render below.
 before_items_all = st.session_state.get("before_stac_items", [])
 after_items_all = st.session_state.get("after_stac_items", [])
 
 if before_items_all and after_items_all:
+    before_min_coverage = st.session_state.get("before_min_coverage", 50)
+    after_min_coverage = st.session_state.get("after_min_coverage", 50)
+
     items_signature = (
         tuple(item.id for item in before_items_all),
         tuple(item.id for item in after_items_all),
+        before_min_coverage,
+        after_min_coverage,
     )
     if st.session_state.get("auto_pair_signature") != items_signature:
-        st.session_state["auto_pair"] = select_best_pair(before_items_all, after_items_all)
+        st.session_state["auto_pair"] = select_best_pair(
+            before_items_all,
+            after_items_all,
+            min_coverage_before=before_min_coverage,
+            min_coverage_after=after_min_coverage,
+        )
         st.session_state["auto_pair_signature"] = items_signature
         auto_pair = st.session_state["auto_pair"]
         if auto_pair is not None:

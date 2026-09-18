@@ -18,7 +18,7 @@ from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
 
 from core.stac import search_sentinel2
-from core.change import day_of_year_distance, sun_elevation_diff
+from core.change import day_of_year_distance, sun_elevation_diff, granule_coverage_pct
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -166,15 +166,9 @@ def scene_picker(
         ),
     )
 
-    def _granule_coverage_pct(item: Any) -> Optional[float]:
-        nodata_pct = item.properties.get("s2:nodata_pixel_percentage")
-        if nodata_pct is None:
-            return None
-        return 100.0 - float(nodata_pct)
-
     visible_items = [
         item for item in items
-        if (cov := _granule_coverage_pct(item)) is None or cov >= min_coverage
+        if (cov := granule_coverage_pct(item)) is None or cov >= min_coverage
     ]
     hidden_count = len(items) - len(visible_items)
     if hidden_count:

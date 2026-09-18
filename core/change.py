@@ -368,14 +368,69 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
     return notes
 
 
+def granule_coverage_pct(item: Any) -> Optional[float]:
+    """
+    Granule-level real-data coverage for a STAC item: 100% minus
+    Sentinel-2's own s2:nodata_pixel_percentage property. Returns None if
+    the item doesn't report that property, rather than guessing.
+
+    This is coverage of the WHOLE scene, not specifically any particular
+    AOI -- a scene can score high here and still only partially cover a
+    given AOI (or vice versa, if a small AOI happens to sit entirely in a
+    mostly-empty granule's one good corner). The AOI-specific check is
+    core.change.coverage_overlap, which needs the scene actually loaded;
+    this function is the cheap, metadata-only proxy used for filtering
+    search results *before* anything is loaded -- see scene_picker's
+    "Minimum coverage" slider and select_best_pair's min_coverage_before/
+    min_coverage_after below.
+    """
+    nodata_pct = item.properties.get("s2:nodata_pixel_percentage")
+    if nodata_pct is None:
+        return None
+    return 100.0 - float(nodata_pct)
+
+
+def _filter_by_coverage(items: List[Any], min_coverage: float) -> List[Any]:
+    """
+    Keep items with granule_coverage_pct >= min_coverage, or unknown
+    coverage (never filtered out -- matches scene_picker's slider
+    behavior: missing metadata isn't treated as a failure). If filtering
+    would remove every item, falls back to the original unfiltered list
+    rather than returning empty -- a caller that already confirmed items
+    is non-empty should still get a best-effort pair out of
+    select_best_pair, not nothing, just because every candidate happened
+    to fall below the threshold.
+    """
+    if min_coverage <= 0:
+        return items
+
+    filtered = [
+        item for item in items
+        if (cov := granule_coverage_pct(item)) is None or cov >= min_coverage
+    ]
+    return filtered if filtered else items
+
+
 def select_best_pair(
-    before_items: List, after_items: List
+    before_items: List,
+    after_items: List,
+    min_coverage_before: float = 50.0,
+    min_coverage_after: float = 50.0,
 ) -> Optional[Tuple[Any, Any]]:
     """
     Choose the before/after pair, from two independently-searched result
     lists, with the best comparability_score: lowest seasonal (day-of-
     year) distance first, then lowest sun-elevation difference, with
     combined cloud cover as the final tiebreaker.
+
+    Each list is first filtered to granule_coverage_pct >=
+    min_coverage_before / min_coverage_after respectively (see
+    _filter_by_coverage for the "don't filter to nothing" fallback), so
+    the automatic pick respects the same coverage threshold as
+    scene_picker's "Minimum coverage" slider rather than being able to
+    silently auto-select a scene the user would have hidden if picking
+    manually. Defaults (50%) match that slider's own default; pass the
+    slider's live value(s) to keep them in sync when the user adjusts it.
 
     Shared by two call sites: the Change Detection page uses this to
     automatically pre-select a pair as soon as both searches return
@@ -394,16 +449,20 @@ def select_best_pair(
     -------
     tuple(pystac.Item, pystac.Item) or None
         (best_before, best_after), ranked by comparability_score, or None
-        if either list is empty.
+        if either input list is empty. (Coverage filtering alone will
+        never be the reason this returns None -- see the fallback above.)
     """
     if not before_items or not after_items:
         return None
 
+    before_candidates = _filter_by_coverage(before_items, min_coverage_before)
+    after_candidates = _filter_by_coverage(after_items, min_coverage_after)
+
     best_pair: Optional[Tuple[Any, Any]] = None
     best_score: Optional[Tuple[float, float, float]] = None
 
-    for before in before_items:
-        for after in after_items:
+    for before in before_candidates:
+        for after in after_candidates:
             score = comparability_score(before, after)
             if best_score is None or score < best_score:
                 best_score = score
