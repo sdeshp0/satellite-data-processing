@@ -113,11 +113,18 @@ def _search_with_fallback(
     return [], None, None
 
 
-def check_sample(sample: Dict[str, Any], max_dim: int) -> Dict[str, Any]:
+def check_sample(sample: Dict[str, Any], max_dim: int, enable_mosaic: bool = True) -> Dict[str, Any]:
     """
     Run the full search -> pair-select -> load -> coverage-overlap
     pipeline for one sample, mirroring exactly what
     app/components/change_display.py does for a real comparison.
+
+    Parameters
+    ----------
+    enable_mosaic : bool
+        Passed straight through to core.load.load_scene for both scenes.
+        Set False to measure the OLD single-tile-only coverage/cost for
+        comparison -- see main()'s --no-mosaic flag.
 
     Returns a result dict on success, or a dict with an "error" key if no
     scenes could be found for one or both windows.
@@ -139,8 +146,12 @@ def check_sample(sample: Dict[str, Any], max_dim: int) -> Dict[str, Any]:
 
     before_item, after_item = select_best_pair(before_items, after_items)
 
-    bands_before, before_geom_coverage = load_scene(before_item, aoi, max_dim=max_dim)
-    bands_after, after_geom_coverage = load_scene(after_item, aoi, max_dim=max_dim)
+    bands_before, before_geom_coverage, before_load_info = load_scene(
+        before_item, aoi, max_dim=max_dim, enable_mosaic=enable_mosaic
+    )
+    bands_after, after_geom_coverage, after_load_info = load_scene(
+        after_item, aoi, max_dim=max_dim, enable_mosaic=enable_mosaic
+    )
 
     # Mirrors change_display.py's loading sequence closely enough for the
     # SCL-based coverage check -- scale_bands isn't needed here since it
@@ -158,6 +169,8 @@ def check_sample(sample: Dict[str, Any], max_dim: int) -> Dict[str, Any]:
         "after_item": after_item,
         "before_geom_coverage": before_geom_coverage,
         "after_geom_coverage": after_geom_coverage,
+        "before_load_info": before_load_info,
+        "after_load_info": after_load_info,
         "coverage_pct": coverage_pct,
         "comparability_notes": notes,
     }
@@ -209,6 +222,14 @@ def main() -> None:
         "--output", "-o", type=str, default="sample_coverage_report.txt",
         help="Path to write the full text report to (default: sample_coverage_report.txt in the current directory).",
     )
+    parser.add_argument(
+        "--no-mosaic", action="store_true",
+        help=(
+            "Disable multi-tile mosaicking (core.load.load_scene's enable_mosaic=False), "
+            "restoring the old single-tile-only coverage/cost. Run once with this flag and "
+            "once without to A/B compare coverage improvement against added cost."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -222,18 +243,29 @@ def main() -> None:
         sys.exit(2)
 
     keys = [args.sample] if args.sample else list(SAMPLE_ANALYSES.keys())
+    enable_mosaic = not args.no_mosaic
 
     report = ReportWriter()
     # status is one of "PASS", "FLAGGED", "NO_SCENES", "ERROR" -- every
     # sample gets an entry here regardless of outcome, so the final summary
     # table (below) covers everything checked, not just the problems.
     summary_rows: List[Dict[str, str]] = []
+    # Aggregate mosaic-cost tracking across all samples, for the "Mosaic
+    # cost summary" section at the end -- the actual point of --no-mosaic
+    # and this whole script's cost-measurement purpose: how much MORE
+    # tiles/time did mosaicking actually add, in total, across a real
+    # batch of samples, not just per-sample anecdotes.
+    total_companion_tiles_used = 0
+    total_companion_search_time = 0.0
+    total_companion_read_time = 0.0
+    samples_needing_mosaic = 0
 
     report.write("Sample Coverage Report")
     report.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report.write(
         f"Settings: max_dim={args.max_dim}, both_threshold={args.both_threshold:.0f}%, "
-        f"samples={'all' if not args.sample else args.sample}"
+        f"samples={'all' if not args.sample else args.sample}, "
+        f"mosaic={'enabled' if enable_mosaic else 'DISABLED (--no-mosaic)'}"
     )
     report.write(f"Checking {len(keys)} sample(s)...")
     report.write("")
@@ -244,7 +276,7 @@ def main() -> None:
         t0 = time.time()
 
         try:
-            result = check_sample(sample, args.max_dim)
+            result = check_sample(sample, args.max_dim, enable_mosaic=enable_mosaic)
         except Exception as exc:  # noqa: BLE001 -- deliberately broad: keep checking other samples
             report.write(f"  ERROR: {type(exc).__name__}: {exc}")
             report.write("")
@@ -279,6 +311,24 @@ def main() -> None:
             f"(cloud {after_item.properties.get('eo:cloud_cover', 0):.0f}%, "
             f"own-footprint coverage ~{result['after_geom_coverage'] * 100:.0f}%)"
         )
+
+        # --- Mosaic cost/coverage, per scene ---
+        sample_needed_mosaic = False
+        for side_label, info in (("Before", result["before_load_info"]), ("After", result["after_load_info"])):
+            if info["mosaic_attempted"]:
+                sample_needed_mosaic = True
+                total_companion_tiles_used += info["companions_used"]
+                total_companion_search_time += info["companion_search_time_s"]
+                total_companion_read_time += info["companion_read_time_s"]
+                report.write(
+                    f"  {side_label} mosaic: {info['primary_geom_coverage'] * 100:.1f}% "
+                    f"\u2192 {info['final_coverage'] * 100:.1f}% coverage "
+                    f"({info['companions_used']}/{info['companions_found']} companion tile(s) used, "
+                    f"+{info['companion_search_time_s'] + info['companion_read_time_s']:.1f}s)"
+                )
+        if sample_needed_mosaic:
+            samples_needing_mosaic += 1
+
         report.write(f"  Usable in BOTH dates:   {pct['both']:.1f}%")
         report.write(f"  Usable before-only:     {pct['before_only']:.1f}%")
         report.write(f"  Usable after-only:      {pct['after_only']:.1f}%")
@@ -323,6 +373,28 @@ def main() -> None:
             report.write(f"  - {row['key']}: [{row['status']}] {row['detail']}")
     else:
         report.write(f"All {len(summary_rows)} sample(s) passed.")
+
+    # --- Aggregate mosaic cost summary ---
+    # The actual point of --no-mosaic and this whole tracking: how much
+    # MORE tiles/time did mosaicking add, in total, across a real batch --
+    # not just a per-sample anecdote. Run once with --no-mosaic and once
+    # without, and compare this section between the two report files
+    # directly.
+    report.write("")
+    report.write("=" * 72)
+    report.write("Mosaic cost summary")
+    report.write("=" * 72)
+    if not enable_mosaic:
+        report.write("Mosaicking was DISABLED for this run (--no-mosaic) -- no added cost to report.")
+    else:
+        report.write(f"Samples needing mosaic (either side): {samples_needing_mosaic} of {len(summary_rows)}")
+        report.write(f"Total companion tiles fetched and used: {total_companion_tiles_used}")
+        report.write(f"Total companion search time: {total_companion_search_time:.1f}s")
+        report.write(f"Total companion read time: {total_companion_read_time:.1f}s")
+        report.write(
+            f"Total added time from mosaicking: "
+            f"{total_companion_search_time + total_companion_read_time:.1f}s"
+        )
 
     report.save(args.output)
     print(f"\nFull report written to: {os.path.abspath(args.output)}")

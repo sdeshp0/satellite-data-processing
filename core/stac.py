@@ -63,3 +63,49 @@ def search_sentinel2(
 
     items = list(search.get_items())
     return items
+
+
+def search_companion_tiles(
+    aoi: Polygon | Dict[str, Any], reference_item: Any, max_items: int = 5
+) -> List[Any]:
+    """
+    Find other Sentinel-2 items on the SAME acquisition date as
+    reference_item that also intersect the AOI -- candidates for
+    mosaicking together when a single tile's granule doesn't fully cover
+    the AOI (see core.load.load_scene's enable_mosaic).
+
+    Sentinel-2 tiles sit on a fixed ~110km grid; an AOI near a tile
+    boundary can straddle two (rarely more) adjacent tiles. Searching by
+    exact acquisition date (rather than, say, a date range) is what finds
+    the specific companion granule(s) from the same satellite pass, not
+    just any other cloud-free scene of the area from a different date.
+
+    Cloud cover is NOT filtered here (queries the full 0-100% range):
+    even a cloudier companion tile can supply real data in a spot the
+    primary tile lacks entirely, and the existing SCL-based masking
+    (core.change.coverage_overlap) still excludes cloudy pixels downstream
+    regardless of which tile they came from.
+
+    Parameters
+    ----------
+    aoi : shapely.geometry.Polygon or GeoJSON-like dict
+    reference_item : pystac.Item
+        The already-selected "primary" scene; its acquisition date is used
+        for the search, and it's excluded from the results.
+    max_items : int
+        Cap on how many companion candidates to return. Search results are
+        usually just the handful of tiles genuinely adjacent to the
+        primary, but this bounds worst-case cost regardless of how many a
+        given AOI happens to intersect.
+
+    Returns
+    -------
+    List[pystac.Item]
+        Other items from the same acquisition date, excluding
+        reference_item itself. Empty if none found (or if the reference
+        item's own date can't be determined).
+    """
+    acquisition_date = reference_item.datetime.date()
+    items = search_sentinel2(aoi, acquisition_date, acquisition_date, max_cloud_cover=100)
+    companions = [it for it in items if it.id != reference_item.id]
+    return companions[:max_items]

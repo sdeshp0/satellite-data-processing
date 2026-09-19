@@ -93,7 +93,13 @@ def feature_display(
     )
 
     with st.spinner("Loading scene..."):
-        bands, coverage_fraction = load_scene_cached(item, aoi.wkt, item.id, preview_max_dim)
+        bands, coverage_fraction, _load_info = load_scene_cached(
+            item, aoi.wkt, item.id, preview_max_dim
+        )
+        # _load_info carries multi-tile-mosaic cost/coverage diagnostics
+        # (see core.load.load_scene) -- not surfaced on this page; see
+        # app/components/change_display.py's "Load cost" expander for
+        # where that's shown.
 
     if coverage_fraction < 0.9:
         st.warning(
@@ -198,4 +204,3 @@ def feature_display(
         "real road vector data (e.g. OpenStreetMap) as a reference layer "
         "rather than trying to detect roads from pixels -- not built yet."
     )
-    
