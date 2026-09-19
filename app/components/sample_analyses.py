@@ -84,11 +84,16 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         "preset": "wildfire",
         "lat": 39.7596, "lon": -121.6219, "width_km": 25, "height_km": 25,
         "before_range": (date(2018, 9, 1), date(2018, 10, 31)),
-        "after_range": (date(2018, 12, 1), date(2019, 1, 31)),
+        "after_range": (date(2018, 11, 25), date(2019, 1, 31)),
         "description": (
             "The Camp Fire ignited on November 8, 2018 and destroyed the "
             "town of Paradise, California within hours -- at the time, the "
-            "deadliest and most destructive wildfire in California history."
+            "deadliest and most destructive wildfire in California history. "
+            "After-window starts Nov 25 (the fire's containment date) rather "
+            "than Dec 1, widening the pool of candidate scenes -- an earlier "
+            "coverage check found the automatically-picked Dec 1 scene had "
+            "cloud concentrated specifically over this AOI despite a "
+            "moderate scene-wide cloud percentage."
         ),
     },
     "kangaroo_island_2020": {
@@ -107,12 +112,21 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         "label": "Hurricane Harvey Flooding — Houston, TX (Aug 2017)",
         "preset": "flood",
         "lat": 29.7604, "lon": -95.3698, "width_km": 40, "height_km": 40,
-        "before_range": (date(2017, 7, 1), date(2017, 7, 31)),
-        "after_range": (date(2017, 8, 29), date(2017, 9, 15)),
+        "before_range": (date(2017, 6, 1), date(2017, 7, 31)),
+        "after_range": (date(2017, 8, 29), date(2017, 9, 30)),
         "description": (
             "Hurricane Harvey stalled over southeast Texas in late August "
             "2017, dropping historic rainfall and causing catastrophic "
-            "flooding across the Houston metro area."
+            "flooding across the Houston metro area. Both windows widened "
+            "from their original single-month span -- an earlier coverage "
+            "check found real, substantial cloud on both sides (not a "
+            "tiling issue), typical of the Gulf Coast humid subtropical "
+            "climate even outside the storm itself; the wider windows give "
+            "the search more candidate dates to find a clearer scene. This "
+            "climate may simply not have a fully clear Sentinel-2 (optical) "
+            "pair close to the event -- Sentinel-1 SAR, which sees through "
+            "cloud, would be a more reliable fit for hurricane-flood "
+            "comparisons specifically, if that's ever added."
         ),
     },
     "rondonia_deforestation": {
@@ -208,31 +222,40 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         "label": "Missouri River Flooding — Nebraska/Iowa, USA (Mar 2019)",
         "preset": "flood",
         "lat": 40.6708, "lon": -95.8608, "width_km": 45, "height_km": 45,
-        "before_range": (date(2019, 1, 15), date(2019, 2, 28)),
+        "before_range": (date(2018, 9, 1), date(2018, 10, 31)),
         "after_range": (date(2019, 3, 15), date(2019, 4, 15)),
         "description": (
             "A mid-March 2019 \"bomb cyclone\" dropped heavy rain onto "
             "already-frozen, snow-covered ground across Nebraska and Iowa, "
             "triggering catastrophic, fast-moving flooding along the "
             "Missouri River -- among the costliest U.S. flood events on "
-            "record at the time. Inland continental climate, unlike the "
-            "coastal/deltaic samples above, so clear scenes on both sides "
-            "of the event are comparatively easy to find."
+            "record at the time. Before-window moved to fall 2018 (post-"
+            "harvest, pre-snow) rather than Jan-Feb 2019 -- an earlier "
+            "coverage check found the original before-window was itself "
+            "snow-covered, which Sentinel-2's own classification correctly "
+            "flags as unusable (same as cloud), not a bug, but it meant "
+            "almost the entire AOI was excluded on the before side. The "
+            "wider seasonal gap to the after-window is a deliberate "
+            "tradeoff to get a real, snow-free baseline."
         ),
     },
     "murray_darling_flood_2022": {
         "label": "Murray-Darling Basin Flooding — Central West NSW, Australia (Nov 2022)",
         "preset": "flood",
         "lat": -33.3833, "lon": 148.0000, "width_km": 45, "height_km": 45,
-        "before_range": (date(2022, 6, 1), date(2022, 7, 31)),
+        "before_range": (date(2022, 3, 1), date(2022, 5, 31)),
         "after_range": (date(2022, 11, 1), date(2022, 11, 30)),
         "description": (
             "Repeated La Ni\u00f1a-driven rainfall through 2022 pushed the "
             "Lachlan and wider Murray-Darling river system to record "
             "levels, flooding towns across central west New South Wales "
-            "in November 2022. Semi-arid inland Australia sees markedly "
-            "less persistent cloud than the monsoon-delta setting the "
-            "Ganges-Brahmaputra sample was removed for."
+            "in November 2022. Before-window moved to autumn (Mar-May) "
+            "and widened to three months -- an earlier coverage check "
+            "found real cloud (not tiling) concentrated over this AOI in "
+            "the original June-July window even after the search's own "
+            "cloud-relaxation fallback; NSW's winter frontal systems make "
+            "that window a harder ask than the drier autumn shoulder "
+            "season."
         ),
     },
     "pantanal_flood_pulse": {
@@ -240,7 +263,7 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         "preset": "flood",
         "lat": -17.7000, "lon": -57.6000, "width_km": 45, "height_km": 45,
         "before_range": (date(2021, 8, 1), date(2021, 9, 30)),
-        "after_range": (date(2022, 2, 1), date(2022, 3, 15)),
+        "after_range": (date(2022, 1, 15), date(2022, 4, 15)),
         "description": (
             "The Pantanal, the world's largest tropical wetland, floods "
             "predictably every year as its rivers overflow during the wet "
@@ -248,7 +271,12 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "single disaster event, similar in spirit to the Bangladesh "
             "sample that was removed but in a tropical-savanna climate "
             "rather than a full monsoon delta, which keeps cloud cover "
-            "considerably more manageable."
+            "considerably more manageable. After-window widened to three "
+            "months (was six weeks) -- an earlier coverage check found "
+            "real wet-season cloud over roughly a third of the AOI in the "
+            "narrower window; wet season is inherently the harder half of "
+            "this comparison to keep clear, so the wider window trades a "
+            "looser seasonal match for more candidate dates to find one."
         ),
     },
 }
