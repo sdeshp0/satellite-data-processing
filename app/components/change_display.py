@@ -287,39 +287,19 @@ def change_display(
     else:
         index_name = preset["index"]
 
-    # --- Multi-tile mosaic toggle (TEMPORARY -- for measuring cost) ---
-    # See core/load.py's module docstring for why this exists: an AOI near
-    # a Sentinel-2 tile boundary can have real coverage gaps that no choice
-    # of date fixes, which load_scene now closes by fetching companion
-    # tiles from the same acquisition date. That's real added network cost
-    # only when it's actually needed, but "only when needed" should be
-    # measured, not assumed -- this checkbox plus the "Load cost" expander
-    # below make that cost visible and A/B-able directly in the app,
-    # without having to go through check_sample_coverage.py's --no-mosaic
-    # flag. Safe to remove this checkbox (and always pass enable_mosaic=
-    # True) once the cost is well understood and no longer needs watching.
-    mosaic_enabled = st.checkbox(
-        "Enable multi-tile mosaicking (temporary -- for measuring cost)",
-        value=True,
-        key=f"{key_prefix}_mosaic_enabled",
-        help=(
-            "When an AOI straddles a Sentinel-2 tile boundary, fills the "
-            "gap using other tiles from the same acquisition date. Turn "
-            "this off to see the old single-tile-only coverage/cost for "
-            "comparison -- see the 'Load cost' section below once scenes "
-            "are loaded."
-        ),
-    )
-
     # --- Load both scenes ---
+    # Multi-tile mosaicking (see core/load.py's module docstring) is always
+    # enabled here -- an earlier version exposed a temporary checkbox and
+    # "Load cost" diagnostic to measure its added cost before deciding to
+    # keep it on by default; that's been evaluated (see
+    # check_sample_coverage.py's --no-mosaic flag for the standalone A/B
+    # tool if the cost ever needs re-checking) and the checkbox removed.
     with st.spinner("Loading before/after scenes..."):
-        bands_before, before_coverage, before_load_info = load_scene_cached(
-            before_item, aoi.wkt, before_item.id, preview_max_dim,
-            enable_mosaic=mosaic_enabled,
+        bands_before, before_coverage, _before_load_info = load_scene_cached(
+            before_item, aoi.wkt, before_item.id, preview_max_dim
         )
-        bands_after, after_coverage, after_load_info = load_scene_cached(
-            after_item, aoi.wkt, after_item.id, preview_max_dim,
-            enable_mosaic=mosaic_enabled,
+        bands_after, after_coverage, _after_load_info = load_scene_cached(
+            after_item, aoi.wkt, after_item.id, preview_max_dim
         )
 
         bands_before = scale_bands(resample_bands(bands_before))
@@ -332,36 +312,6 @@ def change_display(
         # earlier version did) left the RGB preview unaligned, which is why
         # one image could look stretched relative to the other.
         bands_after = align_bands(bands_after, bands_before["nir"])
-
-    # --- Load cost (TEMPORARY diagnostic -- see the checkbox above) ---
-    # Surfaces core.load.load_scene's load_info for both scenes: how many
-    # tiles were actually fetched, how much that improved coverage, and how
-    # much time the mosaic machinery itself took, specifically so the added
-    # cost of this feature can be measured rather than assumed. Safe to
-    # remove this whole expander once that's well understood.
-    with st.expander("\u23f1\ufe0f Load cost (temporary diagnostic)"):
-        cost_col1, cost_col2 = st.columns(2)
-        for label, info in (("Before", before_load_info), ("After", after_load_info)):
-            col = cost_col1 if label == "Before" else cost_col2
-            with col:
-                st.markdown(f"**{label}**")
-                st.write(f"Tiles used: {info['tiles_used']}")
-                st.write(
-                    f"Coverage: {info['primary_geom_coverage'] * 100:.1f}% "
-                    f"\u2192 {info['final_coverage'] * 100:.1f}%"
-                    if info["mosaic_attempted"] else
-                    f"Coverage: {info['primary_geom_coverage'] * 100:.1f}% (single tile, no mosaic needed)"
-                )
-                if info["mosaic_attempted"]:
-                    st.write(f"Companions found / used: {info['companions_found']} / {info['companions_used']}")
-                    st.write(f"Companion search time: {info['companion_search_time_s']:.2f}s")
-                    st.write(f"Companion read time: {info['companion_read_time_s']:.2f}s")
-                st.write(f"Total load time: {info['total_load_time_s']:.2f}s")
-        st.caption(
-            "Temporary instrumentation for evaluating the multi-tile "
-            "mosaic feature's cost -- toggle the checkbox above to compare "
-            "against single-tile-only loading."
-        )
 
     # --- Data coverage check (per scene) ---
     # Sentinel-2 granules aren't always fully covered by real data at swath
