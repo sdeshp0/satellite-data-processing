@@ -80,20 +80,36 @@ def _search_with_fallback(
 
 SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
     "camp_fire_2018": {
-        "label": "Camp Fire — Paradise, CA (Nov 2018)",
+        "label": "Camp Fire — Paradise, CA (Nov 2018 \u2192 Oct 2019)",
         "preset": "wildfire",
         "lat": 39.7596, "lon": -121.6219, "width_km": 25, "height_km": 25,
         "before_range": (date(2018, 9, 1), date(2018, 10, 31)),
-        "after_range": (date(2018, 11, 25), date(2019, 1, 31)),
+        "after_range": (date(2019, 9, 1), date(2019, 10, 31)),
         "description": (
             "The Camp Fire ignited on November 8, 2018 and destroyed the "
             "town of Paradise, California within hours -- at the time, the "
             "deadliest and most destructive wildfire in California history. "
-            "After-window starts Nov 25 (the fire's containment date) rather "
-            "than Dec 1, widening the pool of candidate scenes -- an earlier "
-            "coverage check found the automatically-picked Dec 1 scene had "
-            "cloud concentrated specifically over this AOI despite a "
-            "moderate scene-wide cloud percentage."
+            "After-window moved a full year out (Sep-Oct 2019) rather than "
+            "the immediate post-fire weeks. Two winter after-windows were "
+            "tried first and both failed for what looks like the same "
+            "underlying reason, confirmed by a third: this AOI sits in the "
+            "Sierra Nevada foothills, a Mediterranean climate where "
+            "Nov-Mar is the wet season -- a Jan-Feb 2019 attempt landed "
+            "only 16% usable-both with genuinely high reported cloud "
+            "(37%/18%), and the original Dec 2018 pick (~44% usable-both "
+            "despite a low reported 0%/12%) is consistent with the same "
+            "wet-season cloud sitting locally over this specific AOI even "
+            "when the wider scene reports look clear -- plain seasonal "
+            "weather is enough to explain both, no sensor-classification "
+            "artifact needs to be invoked. Matching the after-date to the "
+            "before-date's dry-season window instead (same calendar range, "
+            "one year later) resolved it completely: 98.7% usable-both, "
+            "0% cloud on both sides. The tradeoff is a burn scar roughly "
+            "11 months old rather than a few weeks -- still clearly "
+            "visible for California's most destructive wildfire on "
+            "record, and the same multi-year/same-season pattern already "
+            "used by the rondonia_deforestation and gran_chaco_paraguay "
+            "samples below."
         ),
     },
     "kangaroo_island_2020": {
@@ -109,24 +125,32 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         ),
     },
     "harvey_houston_2017": {
-        "label": "Hurricane Harvey Flooding — Houston, TX (Aug 2017)",
+        "label": "Hurricane Harvey Flooding — Houston, TX (Jan \u2192 Oct 2017)",
         "preset": "flood",
         "lat": 29.7604, "lon": -95.3698, "width_km": 40, "height_km": 40,
-        "before_range": (date(2017, 6, 1), date(2017, 7, 31)),
-        "after_range": (date(2017, 8, 29), date(2017, 9, 30)),
+        "before_range": (date(2017, 1, 1), date(2017, 2, 28)),
+        "after_range": (date(2017, 10, 1), date(2017, 10, 31)),
         "description": (
             "Hurricane Harvey stalled over southeast Texas in late August "
             "2017, dropping historic rainfall and causing catastrophic "
-            "flooding across the Houston metro area. Both windows widened "
-            "from their original single-month span -- an earlier coverage "
-            "check found real, substantial cloud on both sides (not a "
-            "tiling issue), typical of the Gulf Coast humid subtropical "
-            "climate even outside the storm itself; the wider windows give "
-            "the search more candidate dates to find a clearer scene. This "
-            "climate may simply not have a fully clear Sentinel-2 (optical) "
-            "pair close to the event -- Sentinel-1 SAR, which sees through "
-            "cloud, would be a more reliable fit for hurricane-flood "
-            "comparisons specifically, if that's ever added."
+            "flooding across the Houston metro area. Windows went through "
+            "several rounds of coverage testing: the original Jun-Jul "
+            "before-window (summer, peak Gulf Coast thunderstorm season) "
+            "landed only 3.7% usable-both despite reportedly moderate "
+            "cloud (AOI-local cloud not visible in whole-scene metadata); "
+            "shifting the after-window to October improved that to 32.6%, "
+            "and a spring (Apr-May) before-window improved it further to "
+            "50.1% -- still short. Winter (Jan-Feb), Houston's driest "
+            "season in its humid subtropical climate, is what actually "
+            "resolved it: 98.0% usable-both, 1% cloud on both dates. The "
+            "tradeoff is a before-baseline about 7 months pre-event rather "
+            "than 1, similar in spirit to the multi-month/multi-year gaps "
+            "already used elsewhere in this file (e.g. rondonia_"
+            "deforestation, camp_fire_2018). If a fresher pre-storm "
+            "baseline ever matters more than reliable coverage, Sentinel-1 "
+            "SAR (sees through cloud) would be the more direct fix for "
+            "hurricane-flood comparisons specifically -- not needed here "
+            "since a clear optical pair turned out to exist after all."
         ),
     },
     "rondonia_deforestation": {
@@ -249,13 +273,23 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "Repeated La Ni\u00f1a-driven rainfall through 2022 pushed the "
             "Lachlan and wider Murray-Darling river system to record "
             "levels, flooding towns across central west New South Wales "
-            "in November 2022. Before-window moved to autumn (Mar-May) "
-            "and widened to three months -- an earlier coverage check "
-            "found real cloud (not tiling) concentrated over this AOI in "
-            "the original June-July window even after the search's own "
-            "cloud-relaxation fallback; NSW's winter frontal systems make "
-            "that window a harder ask than the drier autumn shoulder "
-            "season."
+            "in November 2022. KNOWN COVERAGE LIMITATION: this AOI "
+            "position appears to sit somewhere multiple Sentinel-2 tiles' "
+            "edges meet. core.load.load_scene's multi-tile mosaicking "
+            "fixes the tiling gap for every other sample in this file, "
+            "but here it plateaus around ~59% before-side coverage even "
+            "after using the same-date companion tiles it finds -- a "
+            "genuine data-availability ceiling at this specific location "
+            "on the dates tried, not a cloud or date-selection problem "
+            "(the after side does reach full coverage; the mismatch is "
+            "specifically the before side's tile geometry). Widening the "
+            "before-window (already tried, Mar-May) didn't change this, "
+            "since the limitation is geometric, not seasonal. Worth "
+            "trying check_sample_coverage.py's --before-start/--before-"
+            "end override flags to hunt for a date where more/different "
+            "companion tiles happen to be available, or recentering the "
+            "AOI slightly to sit further from whatever tile junction this "
+            "is -- neither attempted yet."
         ),
     },
     "pantanal_flood_pulse": {
