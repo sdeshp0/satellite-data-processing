@@ -414,7 +414,8 @@ def _filter_by_coverage(items: List[Any], min_coverage: float) -> List[Any]:
     return filtered if filtered else items
 
 
-DEFAULT_MAX_CLOUD_FOR_TILE_PREFERENCE = 30.0
+DEFAULT_MAX_CLOUD_FOR_PREFERENCE = 30.0
+DEFAULT_MAX_SEASON_DISTANCE_FOR_PREFERENCE = SEASONAL_WARNING_DAYS  # reuse the same "starts being a real concern" bound
 
 
 def select_best_pair(
@@ -422,52 +423,69 @@ def select_best_pair(
     after_items: List,
     min_coverage_before: float = 50.0,
     min_coverage_after: float = 50.0,
-    max_cloud_for_tile_preference: float = DEFAULT_MAX_CLOUD_FOR_TILE_PREFERENCE,
+    max_cloud_for_preference: float = DEFAULT_MAX_CLOUD_FOR_PREFERENCE,
+    max_season_distance_for_preference: float = DEFAULT_MAX_SEASON_DISTANCE_FOR_PREFERENCE,
 ) -> Optional[Tuple[Any, Any]]:
     """
     Choose the before/after pair, from two independently-searched result
     lists, with the best comparability_score (season, sun-angle, cloud --
-    see that function) among a candidate pool built with a TIERED, not
-    absolute, preference for matching MGRS tiles:
+    see that function) among a candidate pool built by progressively
+    RELAXING preferences, not applying them as absolute vetoes:
 
-      1. Same-tile pairs with "reasonable" combined cloud cover (<=
-         max_cloud_for_tile_preference, default 30%) -- the ideal case:
-         no mosaic needed, and not badly cloudy.
-      2. If none qualify, EVERY candidate pair, same-tile or not --
-         core.load.load_scene's multi-tile mosaicking can compensate for
-         a tile mismatch at a bounded, measured cost (~11s/sample
-         observed in practice via check_sample_coverage.py), so once the
-         same-tile options aren't good enough on their own, tile match
-         stops constraining the search at all and the best-scoring pair
-         wins outright.
+      1. Cloud is the primary gate. If any pair has combined cloud cover
+         <= max_cloud_for_preference (default 30%), only pairs meeting
+         that bar are considered further -- cloud is what's empirically
+         proven most directly destructive to usable coverage (see the
+         module docstring's discussion of AOI-local vs whole-scene cloud
+         percentages). If NO pair is that clear, every pair stays in play
+         and the function falls through to comparability_score's own
+         (season, sun, cloud) ordering as a last resort.
+      2. Within the clear-enough pool, season is a secondary preference:
+         pairs within max_season_distance_for_preference days (default
+         45, same bound as SEASONAL_WARNING_DAYS) are preferred; if none
+         qualify, every clear-enough pair stays in play regardless of
+         season.
+      3. Within THAT pool, matching MGRS tile is a tertiary preference
+         (avoids core.load.load_scene's mosaic cost when a same-tile
+         option is already clear and in-season); again, relaxed rather
+         than required if no same-tile option qualifies.
 
-    (Earlier draft of this had a middle tier -- "same-tile regardless of
-    cloud" -- between these two. That's a bug, not a feature: whenever ANY
-    same-tile pair exists, that middle tier is non-empty, so it would
-    always win over tier 2 and cross-tile pairs would never be reached no
-    matter how much clearer they were. Two tiers, not three.)
+    This replaced an earlier version where MGRS tile match was an
+    absolute, lexicographically-first veto over everything else. Real
+    coverage-check runs (see check_sample_coverage.py) showed that
+    approach had two related failure modes once multi-tile mosaicking
+    existed to make a tile mismatch merely costly rather than
+    catastrophic:
+      - Tile match alone: a same-tile pair with ~30%+ combined cloud was
+        unconditionally preferred over a cross-tile pair with much lower
+        cloud, because tuple comparison let tile match dominate regardless
+        of magnitude on any other axis.
+      - Season, once tile was fixed: comparability_score itself still
+        ranks day-of-year distance ahead of cloud, so the SAME pattern
+        recurred one level down -- a worse-cloud, better-season pair could
+        still beat a much-clearer, worse-season pair even after tile
+        stopped being the blocker. Re-testing one of the original failing
+        samples (Hurricane Harvey) after only the tile fix picked a
+        *different* same-tile pair with slightly lower whole-scene cloud
+        (24% vs 36%) yet ended up with almost identical, still-terrible
+        real coverage (3.7% vs 3.9% usable-both) -- direct evidence that
+        the remaining bottleneck was no longer tile, but the same
+        single-factor-domination pattern applied to season instead.
 
-    This tiering replaced an earlier version where tile match was an
-    absolute, lexicographically-first veto (a same-tile pair always beat
-    ANY cross-tile pair, however much worse its cloud cover). That made
-    sense before mosaicking existed, when a cross-tile pair was often
-    catastrophic (60-95% AOI loss). Once mosaic could fix that, the
-    absolute veto became a liability: real coverage-check runs showed it
-    repeatedly locking onto a same-tile pair with ~30% combined cloud
-    (comfortably passing an early, generous "reasonable" bar) while never
-    even considering a cross-tile pair that might have been dramatically
-    clearer -- because tuple comparison meant ANY tile match unconditionally
-    beat ANY cloud/season improvement, however large. The tiered approach
-    still prefers avoiding mosaic's extra cost when a same-tile option is
-    genuinely fine, but stops treating "same tile" as more important than
-    "actually visible" once it isn't.
+    Cloud is treated as the primary axis (rather than season, as
+    comparability_score alone would rank it) because of that same
+    evidence: seasonal mismatch degrades comparison quality, but cloud
+    cover can directly zero out usable area outright, which is the more
+    severe failure mode to avoid forcing.
 
-    Note this can't see WHERE within a granule cloud sits relative to the
-    AOI -- eo:cloud_cover is a whole-scene percentage, not AOI-local, so a
-    "reasonable" 30% figure can still coincide with a cloud bank sitting
-    directly over a small AOI while most of the rest of the tile is clear.
-    That's a real blind spot no amount of tuning this function resolves;
-    it would need an actual (costlier) per-candidate data read to fix.
+    Note none of this can see WHERE within a granule cloud sits relative
+    to the AOI -- eo:cloud_cover is a whole-scene percentage, not
+    AOI-local, so a "reasonable" 30% figure can still coincide with a
+    cloud bank sitting directly over a small AOI while most of the rest
+    of the tile is clear (this is what the Harvey re-test above actually
+    demonstrated). That blind spot isn't fixable by any reordering of
+    these preferences; it would need an actual, costlier per-candidate
+    data read to resolve.
 
     Each list is first filtered to granule_coverage_pct >=
     min_coverage_before / min_coverage_after respectively (see
@@ -491,9 +509,10 @@ def select_best_pair(
     -------
     tuple(pystac.Item, pystac.Item) or None
         (best_before, best_after), ranked by comparability_score within
-        whichever tier was used, or None if either input list is empty.
-        (Coverage filtering alone will never be the reason this returns
-        None -- see _filter_by_coverage's fallback.)
+        whichever pool survived the relaxation steps above, or None if
+        either input list is empty. (Coverage filtering alone will never
+        be the reason this returns None -- see _filter_by_coverage's
+        fallback.)
     """
     if not before_items or not after_items:
         return None
@@ -516,12 +535,21 @@ def select_best_pair(
             + after.properties.get("eo:cloud_cover", 100)
         ) / 2.0
 
-    reasonable_same_tile_pairs = [
-        (b, a) for b, a in all_pairs
-        if _same_tile(b, a) and _avg_cloud(b, a) <= max_cloud_for_tile_preference
-    ]
+    def _season_distance(before: Any, after: Any) -> int:
+        return day_of_year_distance(before.datetime.date(), after.datetime.date())
 
-    candidate_pool = reasonable_same_tile_pairs or all_pairs
+    # Tier 1: cloud is the primary gate.
+    clear_pairs = [(b, a) for b, a in all_pairs if _avg_cloud(b, a) <= max_cloud_for_preference]
+    pool = clear_pairs or all_pairs
+
+    # Tier 2: within the clear-enough pool (or, if none was clear enough,
+    # within everything), prefer a reasonable seasonal match.
+    in_season_pool = [(b, a) for b, a in pool if _season_distance(b, a) <= max_season_distance_for_preference]
+    pool = in_season_pool or pool
+
+    # Tier 3: within THAT, prefer a matching tile (saves mosaic cost).
+    same_tile_pool = [(b, a) for b, a in pool if _same_tile(b, a)]
+    candidate_pool = same_tile_pool or pool
 
     return min(candidate_pool, key=lambda pair: comparability_score(pair[0], pair[1]))
 
