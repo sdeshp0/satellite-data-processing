@@ -230,6 +230,22 @@ def main() -> None:
             "once without to A/B compare coverage improvement against added cost."
         ),
     )
+    parser.add_argument(
+        "--before-start", type=str, default=None,
+        help="Override the sample's before-window start date (YYYY-MM-DD). Requires --sample and --before-end.",
+    )
+    parser.add_argument(
+        "--before-end", type=str, default=None,
+        help="Override the sample's before-window end date (YYYY-MM-DD). Requires --sample and --before-start.",
+    )
+    parser.add_argument(
+        "--after-start", type=str, default=None,
+        help="Override the sample's after-window start date (YYYY-MM-DD). Requires --sample and --after-end.",
+    )
+    parser.add_argument(
+        "--after-end", type=str, default=None,
+        help="Override the sample's after-window end date (YYYY-MM-DD). Requires --sample and --after-start.",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -241,6 +257,36 @@ def main() -> None:
         print(f"Unknown sample key: {args.sample!r}")
         print("Available keys:", ", ".join(SAMPLE_ANALYSES.keys()))
         sys.exit(2)
+
+    # --- Date-range overrides ---
+    # Lets a specific narrower/shifted window be tried for ONE sample
+    # without editing sample_analyses.py first -- useful for manually
+    # hunting a better date when the automatic pick (however good the
+    # selection logic gets) is still landing on a poor scene, e.g. because
+    # of AOI-local cloud that no amount of metadata-based scoring can see
+    # (see core.change.select_best_pair's docstring). Once a good window
+    # is found this way, it's worth permanently encoding into
+    # sample_analyses.py rather than re-typing it on every run.
+    before_override = None
+    after_override = None
+    if args.before_start or args.before_end or args.after_start or args.after_end:
+        if not args.sample:
+            print("Date-range overrides require --sample to specify which single sample to apply them to.")
+            sys.exit(2)
+        if bool(args.before_start) != bool(args.before_end):
+            print("--before-start and --before-end must be given together.")
+            sys.exit(2)
+        if bool(args.after_start) != bool(args.after_end):
+            print("--after-start and --after-end must be given together.")
+            sys.exit(2)
+        try:
+            if args.before_start:
+                before_override = (date.fromisoformat(args.before_start), date.fromisoformat(args.before_end))
+            if args.after_start:
+                after_override = (date.fromisoformat(args.after_start), date.fromisoformat(args.after_end))
+        except ValueError as exc:
+            print(f"Invalid date in override flags (expected YYYY-MM-DD): {exc}")
+            sys.exit(2)
 
     keys = [args.sample] if args.sample else list(SAMPLE_ANALYSES.keys())
     enable_mosaic = not args.no_mosaic
@@ -267,11 +313,19 @@ def main() -> None:
         f"samples={'all' if not args.sample else args.sample}, "
         f"mosaic={'enabled' if enable_mosaic else 'DISABLED (--no-mosaic)'}"
     )
+    if before_override:
+        report.write(f"Before-window OVERRIDE: {before_override[0]} to {before_override[1]}")
+    if after_override:
+        report.write(f"After-window OVERRIDE: {after_override[0]} to {after_override[1]}")
     report.write(f"Checking {len(keys)} sample(s)...")
     report.write("")
 
     for key in keys:
-        sample = SAMPLE_ANALYSES[key]
+        sample = dict(SAMPLE_ANALYSES[key])  # shallow copy -- never mutate the shared dict
+        if before_override:
+            sample["before_range"] = before_override
+        if after_override:
+            sample["after_range"] = after_override
         report.write(f"=== {key} \u2014 {sample['label']} ===")
         t0 = time.time()
 
