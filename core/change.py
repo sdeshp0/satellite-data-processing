@@ -414,19 +414,60 @@ def _filter_by_coverage(items: List[Any], min_coverage: float) -> List[Any]:
     return filtered if filtered else items
 
 
+DEFAULT_MAX_CLOUD_FOR_TILE_PREFERENCE = 30.0
+
+
 def select_best_pair(
     before_items: List,
     after_items: List,
     min_coverage_before: float = 50.0,
     min_coverage_after: float = 50.0,
+    max_cloud_for_tile_preference: float = DEFAULT_MAX_CLOUD_FOR_TILE_PREFERENCE,
 ) -> Optional[Tuple[Any, Any]]:
     """
     Choose the before/after pair, from two independently-searched result
-    lists, with the best comparability_score: matching MGRS tile first
-    (see comparability_score's docstring for why this outranks everything
-    else), then lowest seasonal (day-of-year) distance, then lowest
-    sun-elevation difference, with combined cloud cover as the final
-    tiebreaker.
+    lists, with the best comparability_score (season, sun-angle, cloud --
+    see that function) among a candidate pool built with a TIERED, not
+    absolute, preference for matching MGRS tiles:
+
+      1. Same-tile pairs with "reasonable" combined cloud cover (<=
+         max_cloud_for_tile_preference, default 30%) -- the ideal case:
+         no mosaic needed, and not badly cloudy.
+      2. If none qualify, EVERY candidate pair, same-tile or not --
+         core.load.load_scene's multi-tile mosaicking can compensate for
+         a tile mismatch at a bounded, measured cost (~11s/sample
+         observed in practice via check_sample_coverage.py), so once the
+         same-tile options aren't good enough on their own, tile match
+         stops constraining the search at all and the best-scoring pair
+         wins outright.
+
+    (Earlier draft of this had a middle tier -- "same-tile regardless of
+    cloud" -- between these two. That's a bug, not a feature: whenever ANY
+    same-tile pair exists, that middle tier is non-empty, so it would
+    always win over tier 2 and cross-tile pairs would never be reached no
+    matter how much clearer they were. Two tiers, not three.)
+
+    This tiering replaced an earlier version where tile match was an
+    absolute, lexicographically-first veto (a same-tile pair always beat
+    ANY cross-tile pair, however much worse its cloud cover). That made
+    sense before mosaicking existed, when a cross-tile pair was often
+    catastrophic (60-95% AOI loss). Once mosaic could fix that, the
+    absolute veto became a liability: real coverage-check runs showed it
+    repeatedly locking onto a same-tile pair with ~30% combined cloud
+    (comfortably passing an early, generous "reasonable" bar) while never
+    even considering a cross-tile pair that might have been dramatically
+    clearer -- because tuple comparison meant ANY tile match unconditionally
+    beat ANY cloud/season improvement, however large. The tiered approach
+    still prefers avoiding mosaic's extra cost when a same-tile option is
+    genuinely fine, but stops treating "same tile" as more important than
+    "actually visible" once it isn't.
+
+    Note this can't see WHERE within a granule cloud sits relative to the
+    AOI -- eo:cloud_cover is a whole-scene percentage, not AOI-local, so a
+    "reasonable" 30% figure can still coincide with a cloud bank sitting
+    directly over a small AOI while most of the rest of the tile is clear.
+    That's a real blind spot no amount of tuning this function resolves;
+    it would need an actual (costlier) per-candidate data read to fix.
 
     Each list is first filtered to granule_coverage_pct >=
     min_coverage_before / min_coverage_after respectively (see
@@ -440,11 +481,7 @@ def select_best_pair(
     Shared by two call sites: the Change Detection page uses this to
     automatically pre-select a pair as soon as both searches return
     results (the user can still override via either scene_picker table),
-    and sample_analyses.py uses it for the one-click samples. Picking each
-    side's lowest-cloud scene independently (the simpler alternative) can
-    easily land on a pair that's individually clear but seasonally or
-    illumination-mismatched -- exactly what comparability_checks warns
-    about once a pair is actually loaded.
+    and sample_analyses.py uses it for the one-click samples.
 
     Runs in O(len(before_items) * len(after_items)); both lists are
     typically small (a few dozen items at most from one search window), so
@@ -453,9 +490,10 @@ def select_best_pair(
     Returns
     -------
     tuple(pystac.Item, pystac.Item) or None
-        (best_before, best_after), ranked by comparability_score, or None
-        if either input list is empty. (Coverage filtering alone will
-        never be the reason this returns None -- see the fallback above.)
+        (best_before, best_after), ranked by comparability_score within
+        whichever tier was used, or None if either input list is empty.
+        (Coverage filtering alone will never be the reason this returns
+        None -- see _filter_by_coverage's fallback.)
     """
     if not before_items or not after_items:
         return None
@@ -463,62 +501,53 @@ def select_best_pair(
     before_candidates = _filter_by_coverage(before_items, min_coverage_before)
     after_candidates = _filter_by_coverage(after_items, min_coverage_after)
 
-    best_pair: Optional[Tuple[Any, Any]] = None
-    best_score: Optional[Tuple[float, float, float]] = None
+    all_pairs = [(before, after) for before in before_candidates for after in after_candidates]
+    if not all_pairs:
+        return None
 
-    for before in before_candidates:
-        for after in after_candidates:
-            score = comparability_score(before, after)
-            if best_score is None or score < best_score:
-                best_score = score
-                best_pair = (before, after)
+    def _same_tile(before: Any, after: Any) -> bool:
+        tile_before = before.properties.get("s2:mgrs_tile")
+        tile_after = after.properties.get("s2:mgrs_tile")
+        return tile_before is not None and tile_before == tile_after
 
-    return best_pair
+    def _avg_cloud(before: Any, after: Any) -> float:
+        return (
+            before.properties.get("eo:cloud_cover", 100)
+            + after.properties.get("eo:cloud_cover", 100)
+        ) / 2.0
+
+    reasonable_same_tile_pairs = [
+        (b, a) for b, a in all_pairs
+        if _same_tile(b, a) and _avg_cloud(b, a) <= max_cloud_for_tile_preference
+    ]
+
+    candidate_pool = reasonable_same_tile_pairs or all_pairs
+
+    return min(candidate_pool, key=lambda pair: comparability_score(pair[0], pair[1]))
 
 
-def comparability_score(before_item, after_item) -> Tuple[float, float, float, float]:
+def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
     """
     Sortable score for ranking candidate before/after pairs -- lower is
     better on every component, and the tuple is meant to be used directly
-    with min()/sorted(). Used by sample_analyses.py and the Change
-    Detection page's automatic pre-selection to pick a pair that's
-    genuinely comparable, rather than picking each side's lowest-cloud
-    scene independently (which could pair a summer "before" with a winter
-    "after" purely because each happened to be the clearest scene in its
-    own search window).
-
-    MGRS tile match is checked FIRST, ahead of season/sun-angle/cloud.
-    Sentinel-2 tiles sit on a fixed ~110km grid, and an AOI anywhere near a
-    tile boundary can end up with before/after scenes drawn from different
-    tiles -- which means the two scenes can be looking at substantially
-    different ground within the AOI, not just under different conditions.
-    In practice this turned out to be the single biggest driver of poor
-    before/after coverage overlap (see core.change.coverage_overlap):
-    scenes from mismatched tiles routinely lost 60-95% of the AOI to
-    "usable in only one date", even with 0% cloud cover on both sides,
-    while a same-tile pair with a much worse seasonal/sun-angle match
-    still covered the AOI fine. A seasonal or illumination mismatch
-    degrades comparison quality; a tile mismatch can make large parts of
-    the AOI simply unavailable to compare at all -- worth fixing first
-    whenever a same-tile alternative exists in the search results (Sentinel
-    -2's ~5-day revisit usually means one does).
+    with min()/sorted(). Used within whichever tier select_best_pair has
+    already narrowed candidates down to (see that function for the MGRS
+    tile preference, which used to live in this score directly but is now
+    a separate tiering step -- see its docstring for why).
 
     Returns
     -------
-    tuple(float, float, float, float)
-        (tile_mismatch, day_of_year_distance, sun_elevation_diff_or_0,
-        combined_cloud_cover). tile_mismatch is 0.0 if both items report
-        the same s2:mgrs_tile, else 1.0 (including when either is
-        missing -- treated as "can't confirm a match", not as a match).
-        Season and illumination match are prioritized next (they're
-        harder-to-fix, more distorting mismatches than cloud cover);
-        combined cloud cover is the final tiebreaker among otherwise-
-        similar pairs.
+    tuple(float, float, float)
+        (day_of_year_distance, sun_elevation_diff_or_0, combined_cloud_cover)
+        Seasonal and illumination match are prioritized first (they're the
+        harder-to-fix, more distorting mismatches); combined cloud cover
+        is the final tiebreaker among otherwise-similar pairs. Picking
+        each side's lowest-cloud scene independently (the simpler
+        alternative to using this at all) can easily land on a pair
+        that's individually clear but seasonally or illumination-
+        mismatched -- exactly what comparability_checks warns about once
+        a pair is actually loaded.
     """
-    tile_before = before_item.properties.get("s2:mgrs_tile")
-    tile_after = after_item.properties.get("s2:mgrs_tile")
-    tile_mismatch = 0.0 if (tile_before is not None and tile_before == tile_after) else 1.0
-
     doy_dist = day_of_year_distance(before_item.datetime.date(), after_item.datetime.date())
     elev_diff = sun_elevation_diff(before_item, after_item)
     elev_component = elev_diff if elev_diff is not None else 0.0
@@ -526,7 +555,7 @@ def comparability_score(before_item, after_item) -> Tuple[float, float, float, f
         before_item.properties.get("eo:cloud_cover", 100)
         + after_item.properties.get("eo:cloud_cover", 100)
     )
-    return (tile_mismatch, float(doy_dist), float(elev_component), float(cloud))
+    return (float(doy_dist), float(elev_component), float(cloud))
 
 
 # --- Delta -------------------------------------------------------------------
