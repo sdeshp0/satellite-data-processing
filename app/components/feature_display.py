@@ -88,9 +88,14 @@ def feature_display(
         st.info("Select at least one feature type above.")
         return
 
-    mask_clouds = st.checkbox(
-        "Mask clouds / shadows using SCL", value=True, key=f"{key_prefix}_mask_clouds"
-    )
+    # Rendered in the sidebar (alongside the search controls) rather than
+    # here in the main body -- see index_display.py's identical treatment
+    # of this same control for the reasoning (a processing choice made
+    # once before viewing results, not tied to a specific visualization).
+    with st.sidebar:
+        mask_clouds = st.checkbox(
+            "Mask clouds / shadows using SCL", value=True, key=f"{key_prefix}_mask_clouds"
+        )
 
     with st.spinner("Loading scene..."):
         bands, coverage_fraction, _load_info = load_scene_cached(

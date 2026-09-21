@@ -27,7 +27,7 @@ if ROOT not in sys.path:
 
 from app.components.aoi_selector import render_aoi_preview
 from app.components.scene_selector import scene_selector, scene_picker
-from app.components.change_display import change_display
+from app.components.change_display import change_display, ALL_INDEX_NAMES
 from app.components.sample_analyses import sample_analysis_picker
 from core.change import EVENT_PRESETS, select_best_pair
 
@@ -58,6 +58,21 @@ with st.sidebar:
         key="change_preset",
     )
     st.caption(EVENT_PRESETS[preset_key]["methodology"])
+
+    # Only relevant for the Custom preset (every other preset has its own
+    # fixed index) -- placed right here, next to the choice that makes it
+    # relevant, rather than in the main body below where change_display
+    # used to render it. change_display reads this value back via
+    # session_state (key "change_custom_index") instead of rendering the
+    # widget itself.
+    if EVENT_PRESETS[preset_key]["index"] is None:
+        st.selectbox(
+            "Index to compare",
+            options=ALL_INDEX_NAMES,
+            index=0,
+            key="change_custom_index",
+            help="Which of the 8 spectral indices to difference for the Custom preset.",
+        )
 
     st.divider()
     st.subheader("Before")
@@ -107,18 +122,18 @@ with st.expander(f"AOI preview — {aoi_label}"):
 # below), not on every rerun -- otherwise it would silently overwrite a
 # manual selection on every subsequent interaction with the page. A fresh
 # search (new items on either side), or moving either "Minimum coverage"
-# slider in the pickers below, does reset to a fresh auto-pick, matching
-# the mental model: new inputs, new starting point, still overridable.
+# slider in the sidebar, does reset to a fresh auto-pick, matching the
+# mental model: new inputs, new starting point, still overridable.
 #
 # The coverage values are read from session_state under the SAME widget
-# keys scene_picker's "Minimum coverage" sliders use (f"{key_prefix}_min_
-# coverage") -- Streamlit updates session_state for a widget's key as soon
-# as the user interacts with it, before the script reruns, so this sees
-# the current slider position even though this block runs earlier in the
-# script than the sliders themselves. Before either slider has ever been
-# rendered (e.g. right after a fresh search), the .get(..., 50) fallback
-# matches the sliders' own default, so the very first auto-pick is
-# consistent with what the sliders will show once they do render below.
+# keys the sidebar's "Minimum coverage" sliders use (see scene_selector,
+# f"{key_prefix}_min_coverage"). Those sliders render in the sidebar block
+# above this one runs earlier in the script, so by the time this code runs
+# the current slider position is always already in session_state -- no
+# stale-default edge case to reason about here, unlike when this slider
+# used to live in scene_picker's table (main body, rendered AFTER this
+# block). The .get(..., 50) fallback only matters if this code is ever
+# reached without the sidebar having rendered at all.
 before_items_all = st.session_state.get("before_stac_items", [])
 after_items_all = st.session_state.get("after_stac_items", [])
 

@@ -277,13 +277,15 @@ def change_display(
     st.caption(preset["methodology"])
 
     # --- Index selection (custom preset only) ---
+    # The actual "Index to compare" selectbox is rendered in the sidebar
+    # (02_Change_Detection.py), right next to the Event Type selectbox
+    # that determines whether it's even relevant -- so choosing "Custom"
+    # immediately shows the index choice right there, rather than needing
+    # to scroll down to find it. Read the value here rather than
+    # rendering the widget again, same pattern scene_picker uses for the
+    # sidebar's "Minimum coverage" slider.
     if preset["index"] is None:
-        index_name = st.selectbox(
-            "Index to compare",
-            options=ALL_INDEX_NAMES,
-            index=0,
-            key=f"{key_prefix}_custom_index",
-        )
+        index_name = st.session_state.get(f"{key_prefix}_custom_index", ALL_INDEX_NAMES[0])
     else:
         index_name = preset["index"]
 

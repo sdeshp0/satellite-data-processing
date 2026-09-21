@@ -228,11 +228,22 @@ def index_display(
         st.write(f"**Bounding box:** {item.bbox}")
 
     # --- Options ---
-    mask_clouds = st.checkbox(
-        "Mask clouds / shadows using SCL",
-        value=True,
-        key=f"{key_prefix}_mask_clouds",
-    )
+    # Rendered in the sidebar (alongside the search controls) rather than
+    # here in the main body: this is a processing/config choice made once
+    # before viewing results, not something tied to a specific
+    # visualization, so it fits better grouped with the other "how should
+    # scenes be searched/prepared" controls (see scene_selector's cloud-
+    # cover and minimum-coverage sliders for the same reasoning). Using
+    # `with st.sidebar:` here rather than changing this function's
+    # signature keeps the component self-contained -- Streamlit's sidebar
+    # accepts new widgets from anywhere in the script, not just from code
+    # that runs inside the page's own `with st.sidebar:` block.
+    with st.sidebar:
+        mask_clouds = st.checkbox(
+            "Mask clouds / shadows using SCL",
+            value=True,
+            key=f"{key_prefix}_mask_clouds",
+        )
 
     # --- Load scene ---
     with st.spinner("Loading scene..."):

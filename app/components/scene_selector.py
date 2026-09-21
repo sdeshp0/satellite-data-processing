@@ -39,6 +39,7 @@ def scene_selector(
     start_date: date,
     end_date: date,
     key_prefix: str = "single",
+    default_min_coverage: int = 50,
 ) -> None:
     """
     Search STAC for Sentinel-2 scenes intersecting the AOI and store results.
@@ -56,6 +57,15 @@ def scene_selector(
         before/after change-detection page calling it with key_prefix
         "before" and "after" -- without the two calls overwriting each
         other's results.
+    default_min_coverage : int
+        Initial position (percent) of the "Minimum coverage" slider
+        rendered here alongside the cloud-cover slider. scene_picker reads
+        this same slider's value (via session_state, key
+        f"{key_prefix}_min_coverage") to filter its results table -- see
+        that function's docstring for what "coverage" means. Both live in
+        the sidebar together since they're the same kind of control: how
+        choosy to be about scene quality, set once before results appear,
+        not something tied to viewing a specific result.
 
     Returns
     -------
@@ -69,6 +79,26 @@ def scene_selector(
         min_value=0, max_value=100, value=40,
         key=f"{key_prefix}_max_cloud_cover",
         help="Raise this if a search comes back empty -- some regions/seasons rarely have fully clear scenes.",
+    )
+
+    st.slider(
+        "Minimum coverage (%)",
+        min_value=0, max_value=100, value=default_min_coverage,
+        key=f"{key_prefix}_min_coverage",
+        help=(
+            "Hides scenes below this granule-level coverage (100% minus "
+            "Sentinel-2's own s2:nodata_pixel_percentage property) from "
+            "the results table below. This is coverage of the WHOLE "
+            "scene, not specifically your AOI -- a scene can clear this "
+            "filter and still only partially cover the AOI, or vice "
+            "versa, since a small AOI can sit entirely within a mostly-"
+            "empty granule's one good corner. The AOI-specific check "
+            "happens after you load a scene (see the coverage warnings "
+            "and coverage-overlap map once a before/after comparison is "
+            "run). Scenes with no coverage metadata reported are never "
+            "hidden by this filter. Doesn't affect the search itself -- "
+            "only which of the results below are shown."
+        ),
     )
 
     if st.button("Search", key=f"{key_prefix}_search_button"):
@@ -134,9 +164,12 @@ def scene_picker(
         see core.change.comparability_checks for the same checks applied
         after a pair is fully loaded.
     default_min_coverage : int
-        Initial position (percent) of the "Minimum coverage" slider that
-        filters out low-coverage scenes before they're shown. See that
-        slider's help text for what "coverage" means here.
+        Fallback coverage threshold (percent) used only if this picker's
+        "Minimum coverage" slider (rendered in the sidebar by
+        scene_selector, not here -- see that function) hasn't been shown
+        yet this session for some reason. In normal use, scene_selector
+        always renders first, so this is a defensive default rather than
+        something a caller typically needs to tune.
 
     Returns
     -------
@@ -148,23 +181,13 @@ def scene_picker(
 
     st.subheader(title)
 
-    min_coverage = st.slider(
-        "Minimum coverage (%)",
-        min_value=0, max_value=100, value=default_min_coverage,
-        key=f"{key_prefix}_min_coverage",
-        help=(
-            "Hides scenes below this granule-level coverage (100% minus "
-            "Sentinel-2's own s2:nodata_pixel_percentage property). This "
-            "is coverage of the WHOLE scene, not specifically your AOI -- "
-            "a scene can clear this filter and still only partially cover "
-            "the AOI, or vice versa, since a small AOI can sit entirely "
-            "within a mostly-empty granule's one good corner. The "
-            "AOI-specific check happens after you load a scene (see the "
-            "coverage warnings and coverage-overlap map once a "
-            "before/after comparison is run). Scenes with no coverage "
-            "metadata reported are never hidden by this filter."
-        ),
-    )
+    # The "Minimum coverage" slider itself lives in the sidebar (see
+    # scene_selector), alongside the cloud-cover slider it's conceptually
+    # paired with -- both are "how choosy to be" controls, set once before
+    # results appear, rather than something tied to viewing this specific
+    # table. Reading it here (rather than rendering it again) avoids a
+    # duplicate-widget-key error and keeps the two in sync automatically.
+    min_coverage = st.session_state.get(f"{key_prefix}_min_coverage", default_min_coverage)
 
     visible_items = [
         item for item in items
@@ -174,13 +197,15 @@ def scene_picker(
     if hidden_count:
         st.caption(
             f"Hiding {hidden_count} of {len(items)} scene(s) below "
-            f"{min_coverage}% coverage. Lower the slider to see them."
+            f"{min_coverage}% coverage. Lower the \u201cMinimum coverage\u201d "
+            "slider in the sidebar to see them."
         )
 
     if not visible_items:
         st.warning(
             f"No scenes meet the {min_coverage}% coverage threshold. "
-            "Lower the slider to see the hidden scene(s)."
+            "Lower the \u201cMinimum coverage\u201d slider in the sidebar to "
+            "see the hidden scene(s)."
         )
         return None
 
