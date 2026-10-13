@@ -16,6 +16,7 @@ rather than deriving roads from pixels -- not implemented here.
 
 from __future__ import annotations
 
+import inspect
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -95,9 +96,24 @@ def threshold_mask(
     else:
         raw_mask = valid & (arr > threshold)
 
-    cleaned = morphology.remove_small_objects(raw_mask, min_size=min_region_px)
-    cleaned = morphology.remove_small_holes(cleaned, area_threshold=min_region_px)
+    cleaned = _remove_small(morphology.remove_small_objects, raw_mask, min_region_px)
+    cleaned = _remove_small(morphology.remove_small_holes, cleaned, min_region_px)
     return cleaned
+
+
+def _remove_small(func, mask: np.ndarray, min_region_px: int) -> np.ndarray:
+    """
+    Call a scikit-image remove_small_* function so it drops regions of
+    fewer than min_region_px pixels, across scikit-image versions.
+
+    0.26 deprecated min_size / area_threshold ("remove if < n") in favour
+    of max_size ("remove if <= n"), so the new keyword gets n - 1.
+    """
+    if "max_size" in inspect.signature(func).parameters:
+        return func(mask, max_size=max(0, min_region_px - 1))
+    if func is morphology.remove_small_holes:
+        return func(mask, area_threshold=min_region_px)
+    return func(mask, min_size=min_region_px)
 
 
 def extract_contours(mask: np.ndarray) -> List[np.ndarray]:
@@ -121,16 +137,27 @@ def contour_to_lonlat(
     geographic coordinates, using the reference band's affine transform
     and CRS.
     """
-    transform = reference.rio.transform()
-    crs = reference.rio.crs
-    to_wgs84 = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    return _contour_to_lonlat(contour, reference.rio.transform(), _to_wgs84(reference.rio.crs))
 
-    points = []
-    for row, col in contour:
-        x, y = transform * (col, row)
-        lon, lat = to_wgs84.transform(x, y)
-        points.append((lon, lat))
-    return points
+
+def _to_wgs84(crs) -> pyproj.Transformer:
+    return pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+
+
+def _contour_to_lonlat(
+    contour: np.ndarray, transform, to_wgs84: pyproj.Transformer
+) -> List[Tuple[float, float]]:
+    # find_contours returns pixel-centre coordinates (pixel (0, 0)'s centre
+    # is (0, 0)), while the affine transform maps (0, 0) to the pixel's
+    # top-left corner -- hence the half-pixel shift before transforming.
+    if len(contour) == 0:
+        return []
+    rows = contour[:, 0] + 0.5
+    cols = contour[:, 1] + 0.5
+    xs = transform.c + cols * transform.a + rows * transform.b
+    ys = transform.f + cols * transform.d + rows * transform.e
+    lons, lats = to_wgs84.transform(xs, ys)
+    return list(zip(np.asarray(lons).tolist(), np.asarray(lats).tolist()))
 
 
 def contours_to_geojson(
@@ -142,10 +169,13 @@ def contours_to_geojson(
     FeatureCollection (WGS84 LineStrings), one Feature per contour, tagged
     with a "feature_type" property.
     """
+    transform = reference.rio.transform()
+    to_wgs84 = _to_wgs84(reference.rio.crs)
+
     features = []
     for feature_key, contours in contours_by_feature.items():
         for contour in contours:
-            coords = contour_to_lonlat(contour, reference)
+            coords = _contour_to_lonlat(contour, transform, to_wgs84)
             if len(coords) < 2:
                 continue
             features.append({

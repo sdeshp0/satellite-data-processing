@@ -5,7 +5,7 @@ Scene loading, processing, and visualization for a selected Sentinel‑2 item.
 from __future__ import annotations
 
 import io
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Tuple
 
 import numpy as np
 import streamlit as st
@@ -17,8 +17,8 @@ from shapely.geometry import Polygon
 
 from app.components.scene_loader import load_scene_cached
 from core.indices import compute_indices
-from core.viz import to_rgb, viz_scl
-from core.utils import resample_bands, scale_bands, apply_cloud_mask
+from core.viz import to_rgb
+from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.stats import summary_table, scl_breakdown, coverage_info
 
 
@@ -269,6 +269,7 @@ def index_display(
         bands = resample_bands(bands)
         bands = scale_bands(bands)  # "scl" is excluded from scaling
         raw_scl = bands["scl"]      # unaffected by the mask toggle below
+        bands = apply_nodata_mask(bands)
         if mask_clouds:
             bands = apply_cloud_mask(bands)
 

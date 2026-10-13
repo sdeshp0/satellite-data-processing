@@ -47,6 +47,10 @@ def to_rgb(
 
     stretched = np.clip((stack - lo) / (hi - lo + 1e-6), 0.0, 1.0)
 
+    # Masked (NaN) pixels render black rather than relying on an undefined
+    # NaN -> uint8 cast.
+    stretched = np.nan_to_num(stretched, nan=0.0)
+
     rgb = (stretched * 255).astype("uint8")
     return rgb
 

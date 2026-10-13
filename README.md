@@ -1,5 +1,7 @@
 # satellite-data-processing
 
+**Live app:** https://satellite-data-exploration.streamlit.app/
+
 An interactive toolkit for exploring Sentinel-2 satellite imagery using the
 Microsoft Planetary Computer. The project provides a modular pipeline for:
 
@@ -211,6 +213,17 @@ failure modes compound in non-obvious ways. What's checked, and where:
 
 ## Development & Testing
 
+### Unit tests and lint
+`tests/` holds fast, offline unit tests for `core/` (synthetic arrays and
+fake STAC items; no network access needed). CI runs both on every push and
+pull request (`.github/workflows/ci.yml`).
+
+```bash
+pip install pytest ruff
+pytest          # unit tests
+ruff check .    # lint (config in pyproject.toml)
+```
+
 ### `check_sample_coverage.py`
 A standalone script (run outside Streamlit, from the repo root) that
 exercises the real search → pair-selection → load → coverage-overlap
@@ -279,6 +292,8 @@ satellite-data-processing/
 │   └── requirements.txt
 │
 ├── check_sample_coverage.py   # Standalone dev tool -- see Development & Testing above
+├── tests/                     # Offline unit tests for core/ (pytest)
+├── pyproject.toml             # pytest + ruff configuration
 │
 ├── .streamlit/
 │   └── secrets.toml      # Local-only; never committed (see Secrets below)
@@ -370,7 +385,9 @@ Community Cloud or Hugging Face Spaces) rather than running locally:
 - Planetary Computer's signed asset URLs are time-limited; `core/load.py`
   re-signs each href immediately before reading it, rather than relying on
   the href attached to a `pystac.Item` that may have sat in Streamlit's
-  shared, server-side cache for up to an hour.
+  shared, server-side cache for up to an hour. The existing token is
+  stripped first, since `planetary_computer.sign` leaves an
+  already-signed URL unchanged.
 - Multi-tile mosaicking means a single scene load can now issue more than
   one tile's worth of band requests when an AOI straddles a Sentinel-2
   tile boundary (bounded by `core/load.py`'s `max_companion_tiles`, default
