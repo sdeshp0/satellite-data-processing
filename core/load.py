@@ -125,6 +125,20 @@ def _boa_offset_for_item(item: Any) -> float:
         return 0.0
 
 
+def _fresh_signed_href(href: str) -> str:
+    """
+    Return href signed with a currently-valid SAS token.
+
+    Search results are already signed (core.stac opens the catalog with
+    pc.sign_inplace), and pc.sign returns any URL that already carries a
+    token unchanged -- so calling it on a cached item's href would keep the
+    original, possibly expired, token. Dropping the query string first
+    forces a fresh token (pc caches tokens per container until they near
+    expiry, so this costs no extra request in the common case).
+    """
+    return pc.sign(href.split("?", 1)[0])
+
+
 def _geometric_validity_mask(
     window: Window, overlap: Window, out_shape: Tuple[int, int]
 ) -> np.ndarray:
@@ -191,7 +205,8 @@ def _read_band(
     on the signed href already attached to the item from search time. Items
     (and their hrefs) can sit in Streamlit's cache for up to an hour --
     signing fresh on every read means a stale cached item never causes a
-    403 from an expired SAS token.
+    403 from an expired SAS token. See _fresh_signed_href for why the
+    existing token has to be stripped first.
 
     Returns
     -------
@@ -205,7 +220,7 @@ def _read_band(
         geometric fact (see _geometric_validity_mask), used by load_scene
         to decide where a companion tile is allowed to fill in data.
     """
-    href = pc.sign(href)
+    href = _fresh_signed_href(href)
 
     with rasterio.Env(**GDAL_HTTP_OPTS), rasterio.open(href) as src:
 

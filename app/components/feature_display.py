@@ -17,7 +17,7 @@ from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 
 from app.components.scene_loader import load_scene_cached
-from core.utils import resample_bands, scale_bands, apply_cloud_mask
+from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.indices import compute_indices
 from core.viz import to_rgb
 from core.features import (
@@ -115,6 +115,7 @@ def feature_display(
 
     bands = resample_bands(bands)
     bands = scale_bands(bands)
+    bands = apply_nodata_mask(bands)
     if mask_clouds:
         bands = apply_cloud_mask(bands)
 

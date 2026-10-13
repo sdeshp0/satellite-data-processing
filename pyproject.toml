@@ -1,0 +1,15 @@
+# Tool configuration only -- dependencies live in app/requirements.txt
+# (what Streamlit Community Cloud installs) and environment.yaml.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+# Real-bug checks (pyflakes + pycodestyle errors); style is left as-is.
+select = ["E", "F"]
+ignore = ["E501", "E402"]  # E402: pages bootstrap sys.path before importing

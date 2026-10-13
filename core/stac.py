@@ -61,7 +61,7 @@ def search_sentinel2(
         query={"eo:cloud_cover": {"lt": max_cloud_cover}},
     )
 
-    items = list(search.get_items())
+    items = list(search.items())
     return items
 
 

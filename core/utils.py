@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Dict, Any, Tuple, Iterable
 from shapely.geometry import box, mapping
 import xarray as xr
-import rioxarray  # required for .rio accessor
+import rioxarray  # noqa: F401  # required for .rio accessor
 
 
 def aoi_from_bounds(bounds: Tuple[float, float, float, float]) -> Dict[str, Any]:
@@ -127,3 +127,26 @@ def apply_cloud_mask(bands: Dict[str, xr.DataArray]) -> Dict[str, xr.DataArray]:
             out[name] = da.where(cloud_mask)
 
     return out
+
+
+# SCL class 0 ("No Data"). Also what core.load's boundless reads report for
+# AOI pixels outside a granule's footprint, so masking it covers both.
+NO_DATA_CLASS = 0
+
+
+def apply_nodata_mask(bands: Dict[str, xr.DataArray]) -> Dict[str, xr.DataArray]:
+    """
+    Set reflectance bands to NaN wherever SCL is "No Data" (class 0).
+
+    Unlike apply_cloud_mask this isn't optional: those pixels hold either
+    fill values or (after the processing-baseline offset) a spurious -0.1
+    reflectance, so leaving them in skews statistics, index maps and
+    feature masks. The SCL band itself is passed through unchanged so its
+    breakdown can still report how much of the AOI had no data.
+    """
+    valid = bands["scl"] != NO_DATA_CLASS
+
+    return {
+        name: da if name == "scl" else da.where(valid)
+        for name, da in bands.items()
+    }
