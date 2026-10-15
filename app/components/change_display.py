@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 from typing import Any, Tuple
 
 import numpy as np
@@ -19,12 +20,14 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 from PIL import Image
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
+from skimage import measure
 
 from app.components.scene_loader import load_scene_cached
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
-from core.viz import to_rgb
+from core.viz import crosshatch, label_points, to_rgb
+from core.hotspots import find_hotspots, hotspot_table, hotspots_geojson
 from core.findings import change_findings, findings_markdown
 from core.change import (
     EVENT_PRESETS,
@@ -419,9 +422,33 @@ def change_display(
     index_before = np.where(valid, index_before, np.nan)
     index_after = np.where(valid, index_after, np.nan)
 
+    # --- Delta + classification ---
+    delta = compute_delta(index_before, index_after, preset["direction"])
+    codes = preset["classify"](index_before, index_after)
+
+    # --- Hotspots: areas where detected change is concentrated ---
+    changed = (codes >= 0) & ~np.isin(codes, preset["baseline_codes"])
+    hotspots = find_hotspots(changed)
+
     # --- RGB previews, side by side ---
     rgb_before = to_rgb(bands_before)
     rgb_after = to_rgb(bands_after)
+
+    show_hotspots = st.checkbox(
+        "Mark change hotspots",
+        value=True,
+        key=f"{key_prefix}_hotspots",
+        help=(
+            "Crosshatch and number the areas where detected change is "
+            "concentrated (up to 5). See the hotspot table under Change Summary."
+        ),
+    )
+    if show_hotspots and hotspots.any():
+        labels = []
+        for region in measure.regionprops(hotspots):
+            labels.append((region.centroid[0], region.centroid[1], region.label))
+        rgb_before = label_points(crosshatch(rgb_before, hotspots > 0), labels)
+        rgb_after = label_points(crosshatch(rgb_after, hotspots > 0), labels)
 
     rgb_col1, rgb_col2 = st.columns(2)
     with rgb_col1:
@@ -464,10 +491,6 @@ def change_display(
         after_label=f"After — {after_item.datetime.date()}",
     )
     st.caption("Drag the handle to reveal more of the before/after image.")
-
-    # --- Delta + classification ---
-    delta = compute_delta(index_before, index_after, preset["direction"])
-    codes = preset["classify"](index_before, index_after)
 
     # --- Summary ---
     st.subheader("Change Summary")
@@ -517,6 +540,26 @@ def change_display(
         st.bar_chart(breakdown_df.set_index("Class")["Percent"])
     else:
         st.caption("No valid (cloud-free in both dates) pixels to summarize.")
+
+    st.markdown("**Change hotspots**")
+    if hotspots.any():
+        st.dataframe(
+            hotspot_table(hotspots, changed, bands_before["nir"], px_ha),
+            hide_index=True,
+            width="stretch",
+        )
+        st.download_button(
+            "Download hotspot outlines (GeoJSON)",
+            data=json.dumps(hotspots_geojson(hotspots, bands_before["nir"])),
+            file_name=f"{before_item.id}_{after_item.id}_hotspots.geojson",
+            mime="application/geo+json",
+            key=f"{key_prefix}_download_hotspots",
+        )
+    else:
+        st.caption(
+            "No concentrated area of change: detected change is scattered "
+            "across the AOI rather than grouped in one place."
+        )
 
     # --- Delta + classification maps ---
     map_col1, map_col2 = st.columns(2)
