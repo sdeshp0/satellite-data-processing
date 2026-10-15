@@ -30,7 +30,10 @@ from core.change import (
     align_bands,
     compute_delta,
     class_breakdown,
+    change_area_summary,
     comparability_checks,
+    format_area,
+    pixel_area_ha,
     coverage_overlap,
     COVERAGE_BOTH_CODE,
     COVERAGE_LABELS,
@@ -463,19 +466,35 @@ def change_display(
     # --- Summary ---
     st.subheader("Change Summary")
 
-    breakdown_df = class_breakdown(codes, preset["labels"])
-    baseline = set(preset["baseline_codes"])
-    valid_codes = codes[codes >= 0]
-    total_valid = valid_codes.size
-    changed_count = int(np.sum(~np.isin(valid_codes, list(baseline)))) if total_valid else 0
-    changed_pct = round(100 * changed_count / total_valid, 1) if total_valid else 0.0
-    mean_delta = float(np.nanmean(delta)) if total_valid else float("nan")
+    px_ha = pixel_area_ha(bands_before["nir"])
+    breakdown_df = class_breakdown(codes, preset["labels"], px_ha)
+    area = change_area_summary(codes, preset["baseline_codes"], px_ha)
+    mean_delta = float(np.nanmean(delta)) if area.analysed_ha else float("nan")
 
-    stat_col1, stat_col2 = st.columns(2)
+    stat_col1, stat_col2, stat_col3 = st.columns(3)
     with stat_col1:
-        st.metric("Area with detected change", f"{changed_pct}%")
+        st.metric(
+            "Area with detected change",
+            format_area(area.changed_ha),
+            help="Analysed pixels outside the method's no-change classes.",
+        )
+        st.caption(f"{area.changed_pct}% of the analysed area")
     with stat_col2:
+        st.metric(
+            "Area analysed",
+            format_area(area.analysed_ha),
+            help="Pixels with usable (cloud-free, real) data in both dates.",
+        )
+        st.caption(f"{area.analysed_pct:.0f}% of the {format_area(area.window_ha)} AOI window")
+    with stat_col3:
         st.metric(f"Mean \u0394{index_name.upper()} over AOI", f"{mean_delta:.3f}")
+
+    if area.analysed_ha and area.analysed_pct < 90:
+        st.caption(
+            f"{format_area(area.window_ha - area.analysed_ha)} of the AOI could not be "
+            "analysed (cloud, shadow, or no data in at least one date), so the "
+            "changed area above is a lower bound."
+        )
 
     if not breakdown_df.empty:
         st.dataframe(breakdown_df, hide_index=True, width="stretch")
