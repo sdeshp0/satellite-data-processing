@@ -25,6 +25,7 @@ from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
 from core.viz import to_rgb
+from core.findings import change_findings, findings_markdown
 from core.change import (
     EVENT_PRESETS,
     align_bands,
@@ -279,6 +280,10 @@ def change_display(
     st.subheader(preset["label"])
     st.caption(preset["methodology"])
 
+    # Filled in once the classification is computed further down, but
+    # placed here so the takeaways sit above the maps and warnings.
+    findings_slot = st.empty()
+
     # --- Index selection (custom preset only) ---
     # The actual "Index to compare" selectbox is rendered in the sidebar
     # (02_Change_Detection.py), right next to the Event Type selectbox
@@ -392,7 +397,8 @@ def change_display(
     # there (rather than inline here) so the same logic can also score
     # candidate pairs before one is picked; see scene_selector.scene_picker's
     # compare_item option and sample_analyses.py's automatic pair selection.
-    for note in comparability_checks(before_item, after_item):
+    notes = comparability_checks(before_item, after_item)
+    for note in notes:
         if note.severity == "warning":
             st.warning(note.message)
         else:
@@ -495,6 +501,16 @@ def change_display(
             "analysed (cloud, shadow, or no data in at least one date), so the "
             "changed area above is a lower bound."
         )
+
+    findings = findings_markdown(change_findings(
+        preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name
+    ))
+    with findings_slot.container(border=True):
+        st.markdown("**Key findings**")
+        st.markdown(findings["summary"])
+        if findings["caveats"]:
+            st.markdown("**Caveats**")
+            st.markdown(findings["caveats"])
 
     if not breakdown_df.empty:
         st.dataframe(breakdown_df, hide_index=True, width="stretch")
