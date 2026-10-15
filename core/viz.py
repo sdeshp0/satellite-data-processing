@@ -77,3 +77,53 @@ def viz_scl(bands: Dict[str, xr.DataArray]) -> plt.Figure:
     ax.set_axis_off()
 
     return fig
+
+
+def crosshatch(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    color: tuple = (255, 212, 0),
+    spacing_px: int | None = None,
+    line_px: int | None = None,
+    alpha: float = 0.8,
+) -> np.ndarray:
+    """
+    Draw thin diagonal crosshatching over the pixels in `mask` on a copy of
+    a uint8 RGB image, leaving the image visible between the lines. Spacing
+    and line width scale with the image so the pattern reads the same on
+    screen at any preview size.
+    """
+    h, w = rgb.shape[:2]
+    size = max(h, w)
+    spacing_px = spacing_px or max(8, size // 40)
+    line_px = line_px or max(1, size // 400)
+    rows, cols = np.mgrid[0:h, 0:w]
+    lines = ((rows + cols) % spacing_px < line_px) | ((rows - cols) % spacing_px < line_px)
+    hatch = mask.astype(bool) & lines
+
+    out = rgb.astype(np.float32).copy()
+    out[hatch] = (1 - alpha) * out[hatch] + alpha * np.array(color, dtype=np.float32)
+    return out.astype(np.uint8)
+
+
+def label_points(rgb: np.ndarray, points) -> np.ndarray:
+    """
+    Write short labels (e.g. hotspot numbers) on a copy of a uint8 RGB
+    image: white text with a dark outline, centred on each (row, col, text).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    size = max(rgb.shape[:2])
+    font_px = max(12, size // 30)
+    try:
+        font = ImageFont.load_default(size=font_px)
+    except TypeError:  # Pillow < 10.1
+        font = ImageFont.load_default()
+    img = Image.fromarray(rgb)
+    draw = ImageDraw.Draw(img)
+    for row, col, text in points:
+        draw.text(
+            (col, row), str(text), fill=(255, 255, 255), font=font, anchor="mm",
+            stroke_width=max(1, font_px // 8), stroke_fill=(0, 0, 0),
+        )
+    return np.asarray(img)
