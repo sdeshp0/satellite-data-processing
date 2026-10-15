@@ -27,3 +27,15 @@ def test_to_rgb_handles_masked_pixels():
     rgb = to_rgb(b)
     assert rgb.dtype == np.uint8 and rgb.shape == (2, 2, 3)
     assert rgb[1, 1].tolist() == [0, 0, 0]
+
+
+def test_highlight_mask_shades_fill_and_outlines_edge():
+    from core.viz import highlight_mask
+    rgb = np.zeros((7, 7, 3), dtype=np.uint8)
+    mask = np.zeros((7, 7), dtype=bool)
+    mask[1:6, 1:6] = True
+    out = highlight_mask(rgb, mask, color=(200, 100, 0), fill_alpha=0.5, outline_px=1)
+    assert out[1, 1].tolist() == [200, 100, 0]   # edge: solid outline
+    assert out[3, 3].tolist() == [100, 50, 0]    # interior: half-shaded
+    assert out[0, 0].tolist() == [0, 0, 0]       # outside: untouched
+    assert rgb.sum() == 0                         # input not modified

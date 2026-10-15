@@ -96,9 +96,16 @@ def threshold_mask(
     else:
         raw_mask = valid & (arr > threshold)
 
-    cleaned = _remove_small(morphology.remove_small_objects, raw_mask, min_region_px)
-    cleaned = _remove_small(morphology.remove_small_holes, cleaned, min_region_px)
-    return cleaned
+    return clean_mask(raw_mask, min_region_px)
+
+
+def clean_mask(mask: np.ndarray, min_region_px: int = 20) -> np.ndarray:
+    """
+    Drop connected regions smaller than min_region_px pixels and fill holes
+    up to that size, so stray pixels don't read as features.
+    """
+    cleaned = _remove_small(morphology.remove_small_objects, mask.astype(bool), min_region_px)
+    return _remove_small(morphology.remove_small_holes, cleaned, min_region_px)
 
 
 def _remove_small(func, mask: np.ndarray, min_region_px: int) -> np.ndarray:

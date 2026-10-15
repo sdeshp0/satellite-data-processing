@@ -24,7 +24,8 @@ from app.components.scene_loader import load_scene_cached
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
-from core.viz import to_rgb
+from core.viz import highlight_mask, to_rgb
+from core.features import clean_mask
 from core.findings import change_findings, findings_markdown
 from core.change import (
     EVENT_PRESETS,
@@ -419,9 +420,28 @@ def change_display(
     index_before = np.where(valid, index_before, np.nan)
     index_after = np.where(valid, index_after, np.nan)
 
+    # --- Delta + classification ---
+    delta = compute_delta(index_before, index_after, preset["direction"])
+    codes = preset["classify"](index_before, index_after)
+
     # --- RGB previews, side by side ---
     rgb_before = to_rgb(bands_before)
     rgb_after = to_rgb(bands_after)
+
+    show_highlight = st.checkbox(
+        "Highlight detected change",
+        value=True,
+        key=f"{key_prefix}_highlight",
+        help=(
+            "Shade and outline the areas counted as change in the summary "
+            "below (regions under 10 pixels are left out to avoid speckle)."
+        ),
+    )
+    if show_highlight:
+        changed = (codes >= 0) & ~np.isin(codes, preset["baseline_codes"])
+        changed = clean_mask(changed, min_region_px=10)
+        rgb_before = highlight_mask(rgb_before, changed)
+        rgb_after = highlight_mask(rgb_after, changed)
 
     rgb_col1, rgb_col2 = st.columns(2)
     with rgb_col1:
@@ -464,10 +484,6 @@ def change_display(
         after_label=f"After — {after_item.datetime.date()}",
     )
     st.caption("Drag the handle to reveal more of the before/after image.")
-
-    # --- Delta + classification ---
-    delta = compute_delta(index_before, index_after, preset["direction"])
-    codes = preset["classify"](index_before, index_after)
 
     # --- Summary ---
     st.subheader("Change Summary")

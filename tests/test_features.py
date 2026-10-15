@@ -53,3 +53,13 @@ def test_region_stats_area():
     stats = region_stats(mask, make_da(np.zeros((10, 10)), res=10.0))
     assert stats["num_regions"] == 2
     assert stats["area_km2"] == pytest.approx(14 * 100 / 1e6)
+
+
+def test_clean_mask_drops_specks_and_fills_holes():
+    from core.features import clean_mask
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[2:12, 2:12] = True
+    mask[6, 6] = False      # small hole
+    mask[17, 17] = True     # isolated speck
+    cleaned = clean_mask(mask, min_region_px=5)
+    assert cleaned[6, 6] and not cleaned[17, 17]
