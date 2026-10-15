@@ -75,3 +75,36 @@ def test_select_best_pair_respects_coverage_but_never_returns_nothing():
     assert change.select_best_pair([low_cov, full_cov], [after])[0] is full_cov
     assert change.select_best_pair([low_cov], [after])[0] is low_cov
     assert change.select_best_pair([], [after]) is None
+
+
+def test_pixel_area_ha_from_transform():
+    assert change.pixel_area_ha(make_da(np.zeros((2, 2)), res=10.0)) == pytest.approx(0.01)
+    assert change.pixel_area_ha(make_da(np.zeros((2, 2)), res=20.0)) == pytest.approx(0.04)
+
+
+@pytest.mark.parametrize("ha, text", [(0.25, "0.2 ha"), (4120.4, "4,120 ha"), (25_000, "250 km²")])
+def test_format_area(ha, text):
+    assert change.format_area(ha) == text
+
+
+def test_class_breakdown_adds_area_column():
+    codes = np.array([0, 0, 1, 2, -1])
+    df = change.class_breakdown(codes, change.STAT_LABELS, pixel_area_ha=0.4)
+    assert list(df.columns) == ["Class", "Pixels", "Area (ha)", "Percent"]
+    assert df["Area (ha)"].tolist() == pytest.approx([0.8, 0.4, 0.4])
+    assert "Area (ha)" not in change.class_breakdown(codes, change.STAT_LABELS).columns
+
+
+def test_change_area_summary_excludes_masked_pixels():
+    codes = np.array([[0, 1, 2, -1], [1, 1, -1, -1]])
+    area = change.change_area_summary(codes, baseline_codes=[0, 1], pixel_area_ha=0.04)
+    assert area.window_ha == pytest.approx(0.32)
+    assert area.analysed_ha == pytest.approx(0.20)
+    assert area.changed_ha == pytest.approx(0.04)
+    assert area.changed_pct == 20.0
+    assert area.analysed_pct == 62.5
+
+
+def test_change_area_summary_all_masked():
+    area = change.change_area_summary(np.full((2, 2), -1), [0], 0.01)
+    assert area.analysed_ha == 0 and area.changed_ha == 0 and area.changed_pct == 0.0

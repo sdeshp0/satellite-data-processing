@@ -818,9 +818,30 @@ EVENT_PRESETS: Dict[str, Dict] = {
 }
 
 
-def class_breakdown(codes: np.ndarray, labels: Dict[int, str]) -> pd.DataFrame:
+def pixel_area_ha(reference: xr.DataArray) -> float:
     """
-    Percentage of valid (non-masked) AOI pixels in each classification code.
+    Ground area of one pixel in hectares, from a reference band's transform.
+    Assumes a projected CRS in metres (Sentinel-2 grids are UTM).
+    """
+    res_x, res_y = reference.rio.resolution()
+    return abs(res_x * res_y) / 1e4
+
+
+def format_area(ha: float) -> str:
+    """Human-readable area: hectares below 10,000 ha, km^2 above."""
+    if ha >= 10_000:
+        return f"{ha / 100:,.0f} km²"
+    if ha >= 10:
+        return f"{ha:,.0f} ha"
+    return f"{ha:,.1f} ha"
+
+
+def class_breakdown(
+    codes: np.ndarray, labels: Dict[int, str], pixel_area_ha: Optional[float] = None
+) -> pd.DataFrame:
+    """
+    Percentage of valid (non-masked) AOI pixels in each classification code,
+    plus an "Area (ha)" column when pixel_area_ha is given.
     """
     values = codes.ravel()
     valid = values[values >= 0]
@@ -831,10 +852,40 @@ def class_breakdown(codes: np.ndarray, labels: Dict[int, str]) -> pd.DataFrame:
         count = int(np.sum(values == code))
         if count == 0:
             continue
-        rows.append({
-            "Class": label,
-            "Pixels": count,
-            "Percent": round(100 * count / total, 1) if total else 0.0,
-        })
+        row = {"Class": label, "Pixels": count}
+        if pixel_area_ha is not None:
+            row["Area (ha)"] = round(count * pixel_area_ha, 1)
+        row["Percent"] = round(100 * count / total, 1) if total else 0.0
+        rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+@dataclass
+class ChangeAreaSummary:
+    """Headline areas for a classified before/after comparison."""
+    window_ha: float      # whole loaded AOI window
+    analysed_ha: float    # usable in both dates (codes >= 0)
+    changed_ha: float     # analysed pixels outside the preset's baseline classes
+    changed_pct: float    # changed share of the analysed area
+    analysed_pct: float   # analysed share of the window
+
+
+def change_area_summary(
+    codes: np.ndarray, baseline_codes: List[int], pixel_area_ha: float
+) -> ChangeAreaSummary:
+    """
+    Convert a classification into headline areas. Masked pixels (code < 0)
+    count toward the window but not the analysed area, so changed_ha is a
+    lower bound whenever analysed_pct is below 100.
+    """
+    total_px = codes.size
+    valid = codes[codes >= 0]
+    changed_px = int(np.sum(~np.isin(valid, list(baseline_codes))))
+    return ChangeAreaSummary(
+        window_ha=total_px * pixel_area_ha,
+        analysed_ha=valid.size * pixel_area_ha,
+        changed_ha=changed_px * pixel_area_ha,
+        changed_pct=round(100 * changed_px / valid.size, 1) if valid.size else 0.0,
+        analysed_pct=round(100 * valid.size / total_px, 1) if total_px else 0.0,
+    )
