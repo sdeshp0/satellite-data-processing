@@ -63,3 +63,38 @@ def test_clean_mask_drops_specks_and_fills_holes():
     mask[17, 17] = True     # isolated speck
     cleaned = clean_mask(mask, min_region_px=5)
     assert cleaned[6, 6] and not cleaned[17, 17]
+
+
+def test_change_clusters_groups_patches_and_drops_specks():
+    from skimage import draw
+    from core.features import change_clusters
+    mask = np.zeros((200, 200), dtype=bool)
+    # A patchy diagonal scar: many small blobs close together.
+    for k in range(10):
+        rr, cc = draw.disk((40 + 8 * k, 40 + 8 * k), 3, shape=mask.shape)
+        mask[rr, cc] = True
+    rr, cc = draw.disk((160, 40), 6, shape=mask.shape)  # second, separate area
+    mask[rr, cc] = True
+    mask[5, 190] = True  # speck
+    clusters = change_clusters(mask)
+    assert len(clusters) == 2
+    scar, other = clusters
+    assert abs(scar.row - 76) < 2 and abs(scar.col - 76) < 2
+    assert scar.semi_major > 2 * scar.semi_minor   # elongated along the diagonal
+    assert abs(other.row - 160) < 1 and abs(other.col - 40) < 1
+
+
+def test_change_clusters_empty():
+    from core.features import change_clusters
+    assert change_clusters(np.zeros((10, 10), dtype=bool)) == []
+
+
+def test_change_clusters_skips_aoi_wide_noise():
+    from core.features import change_clusters
+    mask = np.zeros((300, 300), dtype=bool)
+    mask[::6, ::6] = True                        # scattered single pixels: removed as specks
+    mask[10:290:20, 10:290:20] = True
+    for r in range(10, 290, 25):                 # small blobs spread across the whole AOI
+        for c in range(10, 290, 25):
+            mask[r:r + 4, c:c + 4] = True
+    assert change_clusters(mask) == []

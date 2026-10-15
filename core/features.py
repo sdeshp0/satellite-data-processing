@@ -17,6 +17,7 @@ rather than deriving roads from pixels -- not implemented here.
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -210,3 +211,68 @@ def region_stats(mask: np.ndarray, reference: xr.DataArray) -> Dict[str, float]:
     total_area_km2 = float(mask.sum()) * pixel_area_km2
 
     return {"num_regions": num_regions, "area_km2": total_area_km2}
+
+
+@dataclass
+class ChangeCluster:
+    """An ellipse (pixel coordinates) enclosing one cluster of changed pixels."""
+    row: float
+    col: float
+    semi_major: float
+    semi_minor: float
+    orientation: float  # radians, skimage regionprops convention
+    pixels: int         # changed pixels in the cluster
+
+
+def change_clusters(
+    mask: np.ndarray,
+    max_clusters: int = 5,
+    min_share: float = 0.05,
+    merge_frac: float = 0.05,
+    pad: float = 1.25,
+    min_region_px: int = 10,
+) -> List[ChangeCluster]:
+    """
+    Group changed pixels into a few broad clusters and fit an enclosing
+    ellipse to each, largest first.
+
+    Pixels within merge_frac of the image size of each other join the same
+    cluster, so fragmented change (e.g. a patchy burn) reads as one area.
+    Clusters holding less than min_share of all changed pixels are dropped.
+    Each ellipse matches the cluster's second moments, scaled by `pad` and
+    given a minimum radius so small clusters stay visible. Specks under
+    min_region_px are removed first, and a cluster spanning most of the
+    image in both directions is skipped, since change spread across the
+    whole AOI has no area worth circling.
+    """
+    mask = clean_mask(mask, min_region_px)
+    total = int(mask.sum())
+    if total == 0:
+        return []
+
+    size = max(mask.shape)
+    merge_px = max(1, int(round(merge_frac * size)))
+    grouped = morphology.dilation(
+        mask, morphology.disk(merge_px, decomposition="sequence")
+    )
+    labels = measure.label(grouped) * mask  # cluster ids on changed pixels only
+
+    min_radius = 0.02 * size
+    clusters = []
+    for region in measure.regionprops(labels):
+        if region.area < min_share * total:
+            continue
+        height = region.bbox[2] - region.bbox[0]
+        width = region.bbox[3] - region.bbox[1]
+        if height > 0.8 * mask.shape[0] and width > 0.8 * mask.shape[1]:
+            continue
+        clusters.append(ChangeCluster(
+            row=region.centroid[0],
+            col=region.centroid[1],
+            semi_major=max(min_radius, pad * region.axis_major_length / 2),
+            semi_minor=max(min_radius, pad * region.axis_minor_length / 2),
+            orientation=region.orientation,
+            pixels=int(region.area),
+        ))
+    clusters.sort(key=lambda c: c.pixels, reverse=True)
+    return clusters[:max_clusters]

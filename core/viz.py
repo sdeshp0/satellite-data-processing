@@ -79,31 +79,33 @@ def viz_scl(bands: Dict[str, xr.DataArray]) -> plt.Figure:
     return fig
 
 
-def highlight_mask(
+
+def draw_ellipses(
     rgb: np.ndarray,
-    mask: np.ndarray,
+    ellipses,
     color: tuple = (255, 212, 0),
-    fill_alpha: float = 0.25,
-    outline_px: int = 2,
+    width_px: int = 2,
+    alpha: float = 0.85,
 ) -> np.ndarray:
     """
-    Lightly shade the pixels in `mask` with `color` and draw a solid
-    outline `outline_px` pixels wide just inside each region's edge,
-    returning a new uint8 RGB image.
+    Draw thin ellipse outlines (no fill) on a copy of a uint8 RGB image.
+    `ellipses` are core.features.ChangeCluster-like objects with row, col,
+    semi_major, semi_minor and orientation (radians, regionprops convention).
     """
-    out = rgb.astype(np.float32).copy()
-    tint = np.array(color, dtype=np.float32)
-    out[mask] = (1 - fill_alpha) * out[mask] + fill_alpha * tint
+    h, w = rgb.shape[:2]
+    outline = np.zeros((h, w), dtype=bool)
+    for e in ellipses:
+        n = max(64, int(8 * np.pi * max(e.semi_major, e.semi_minor)))
+        t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        cos_o, sin_o = np.cos(e.orientation), np.sin(e.orientation)
+        for offset in np.arange(width_px) - (width_px - 1) / 2:
+            a, b = e.semi_major + offset, e.semi_minor + offset
+            rows = e.row + a * np.cos(t) * cos_o - b * np.sin(t) * sin_o
+            cols = e.col + a * np.cos(t) * sin_o + b * np.sin(t) * cos_o
+            rows, cols = np.rint(rows).astype(int), np.rint(cols).astype(int)
+            inside = (rows >= 0) & (rows < h) & (cols >= 0) & (cols < w)
+            outline[rows[inside], cols[inside]] = True
 
-    # Erode by one pixel (4-neighbourhood) outline_px times; what's left of
-    # the mask outside the eroded core is the outline.
-    interior = mask.astype(bool)
-    for _ in range(outline_px):
-        padded = np.pad(interior, 1, constant_values=False)
-        interior = (
-            padded[1:-1, 1:-1]
-            & padded[:-2, 1:-1] & padded[2:, 1:-1]
-            & padded[1:-1, :-2] & padded[1:-1, 2:]
-        )
-    out[mask & ~interior] = tint
+    out = rgb.astype(np.float32).copy()
+    out[outline] = (1 - alpha) * out[outline] + alpha * np.array(color, dtype=np.float32)
     return out.astype(np.uint8)

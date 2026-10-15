@@ -29,13 +29,14 @@ def test_to_rgb_handles_masked_pixels():
     assert rgb[1, 1].tolist() == [0, 0, 0]
 
 
-def test_highlight_mask_shades_fill_and_outlines_edge():
-    from core.viz import highlight_mask
-    rgb = np.zeros((7, 7, 3), dtype=np.uint8)
-    mask = np.zeros((7, 7), dtype=bool)
-    mask[1:6, 1:6] = True
-    out = highlight_mask(rgb, mask, color=(200, 100, 0), fill_alpha=0.5, outline_px=1)
-    assert out[1, 1].tolist() == [200, 100, 0]   # edge: solid outline
-    assert out[3, 3].tolist() == [100, 50, 0]    # interior: half-shaded
-    assert out[0, 0].tolist() == [0, 0, 0]       # outside: untouched
-    assert rgb.sum() == 0                         # input not modified
+
+def test_draw_ellipses_outlines_without_fill():
+    from core.features import ChangeCluster
+    from core.viz import draw_ellipses
+    rgb = np.zeros((50, 50, 3), dtype=np.uint8)
+    e = ChangeCluster(row=25, col=25, semi_major=15, semi_minor=10, orientation=0.0, pixels=1)
+    out = draw_ellipses(rgb, [e], color=(200, 100, 0), alpha=1.0, width_px=1)
+    assert out[25, 25].tolist() == [0, 0, 0]         # centre untouched
+    assert out[10, 25].tolist() == [200, 100, 0]     # end of major (row) axis
+    assert out[25, 15].tolist() == [200, 100, 0]     # end of minor (col) axis
+    assert rgb.sum() == 0

@@ -24,8 +24,8 @@ from app.components.scene_loader import load_scene_cached
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
-from core.viz import highlight_mask, to_rgb
-from core.features import clean_mask
+from core.viz import draw_ellipses, to_rgb
+from core.features import change_clusters
 from core.findings import change_findings, findings_markdown
 from core.change import (
     EVENT_PRESETS,
@@ -429,19 +429,19 @@ def change_display(
     rgb_after = to_rgb(bands_after)
 
     show_highlight = st.checkbox(
-        "Highlight detected change",
+        "Circle main change areas",
         value=True,
         key=f"{key_prefix}_highlight",
         help=(
-            "Shade and outline the areas counted as change in the summary "
-            "below (regions under 10 pixels are left out to avoid speckle)."
+            "Draws an ellipse around each of the largest clusters of change "
+            "counted in the summary below (up to 5)."
         ),
     )
     if show_highlight:
         changed = (codes >= 0) & ~np.isin(codes, preset["baseline_codes"])
-        changed = clean_mask(changed, min_region_px=10)
-        rgb_before = highlight_mask(rgb_before, changed)
-        rgb_after = highlight_mask(rgb_after, changed)
+        clusters = change_clusters(changed)
+        rgb_before = draw_ellipses(rgb_before, clusters)
+        rgb_after = draw_ellipses(rgb_after, clusters)
 
     rgb_col1, rgb_col2 = st.columns(2)
     with rgb_col1:
