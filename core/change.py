@@ -231,6 +231,7 @@ class ComparabilityNote:
     """One comparability finding for a before/after scene pair."""
     severity: str  # "warning" (likely to matter) or "info" (worth knowing)
     message: str
+    summary: str = ""  # one-line caveat for the key findings panel (warnings only)
 
 
 # Seasonal (day-of-year) distance thresholds, in days. Below INFO, no note
@@ -306,6 +307,7 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
             "are in different UTM zones -- the after scene has been "
             "reprojected onto the before scene's grid to allow comparison, "
             "which introduces some resampling.",
+            "The scenes are in different UTM zones, so edges may show resampling artefacts.",
         ))
     elif before_tile is not None and after_tile is not None and before_tile != after_tile:
         notes.append(ComparabilityNote(
@@ -316,6 +318,7 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
             "different ground within it -- check the coverage-overlap "
             "map below for how much of the AOI is actually usable in "
             "both dates, not just each scene's own coverage.",
+            "The scenes come from different Sentinel-2 tiles, so coverage within the AOI may differ.",
         ))
 
     before_platform = before_item.properties.get("platform", "unknown")
@@ -340,6 +343,8 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
             "snow cover, or wet/dry season differences can look like the "
             "event itself -- consider picking scenes closer in "
             "day-of-year, if available.",
+            f"The scenes are ~{doy_dist} days apart in the seasonal calendar, "
+            "so part of this change may be seasonal rather than the event.",
         ))
     elif doy_dist >= SEASONAL_INFO_DAYS:
         notes.append(ComparabilityNote(
@@ -359,6 +364,8 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
                 "terrain shading independent of any real surface change -- "
                 "most noticeable in hilly terrain or areas with tall "
                 "vegetation/structures.",
+                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0, so shadow changes "
+                "may show up as false change in hilly or forested terrain.",
             ))
         elif elev_diff >= SUN_ELEV_INFO_DEG:
             notes.append(ComparabilityNote(
