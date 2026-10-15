@@ -65,23 +65,22 @@ def test_clean_mask_drops_specks_and_fills_holes():
     assert cleaned[6, 6] and not cleaned[17, 17]
 
 
-def test_change_clusters_groups_patches_and_drops_specks():
+def test_change_clusters_finds_areas_despite_scattered_noise():
     from skimage import draw
     from core.features import change_clusters
-    mask = np.zeros((200, 200), dtype=bool)
-    # A patchy diagonal scar: many small blobs close together.
-    for k in range(10):
-        rr, cc = draw.disk((40 + 8 * k, 40 + 8 * k), 3, shape=mask.shape)
-        mask[rr, cc] = True
-    rr, cc = draw.disk((160, 40), 6, shape=mask.shape)  # second, separate area
-    mask[rr, cc] = True
-    mask[5, 190] = True  # speck
+    rng = np.random.default_rng(0)
+    mask = np.zeros((300, 300), dtype=bool)
+    rr, cc = draw.ellipse(100, 150, 50, 90, shape=mask.shape, rotation=0.5)
+    mask[rr, cc] = rng.random(rr.size) < 0.6          # patchy main area
+    rr, cc = draw.disk((240, 50), 15, shape=mask.shape)
+    mask[rr, cc] = True                                # smaller second area
+    mask |= rng.random(mask.shape) < 0.15              # noise across the AOI
     clusters = change_clusters(mask)
     assert len(clusters) == 2
-    scar, other = clusters
-    assert abs(scar.row - 76) < 2 and abs(scar.col - 76) < 2
-    assert scar.semi_major > 2 * scar.semi_minor   # elongated along the diagonal
-    assert abs(other.row - 160) < 1 and abs(other.col - 40) < 1
+    main, other = clusters
+    assert abs(main.row - 100) < 5 and abs(main.col - 150) < 5
+    assert main.semi_major > 1.4 * main.semi_minor     # elongated like the area
+    assert abs(other.row - 240) < 3 and abs(other.col - 50) < 3
 
 
 def test_change_clusters_empty():

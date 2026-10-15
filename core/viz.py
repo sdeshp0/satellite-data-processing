@@ -84,7 +84,7 @@ def draw_ellipses(
     rgb: np.ndarray,
     ellipses,
     color: tuple = (255, 212, 0),
-    width_px: int = 2,
+    width_px: int | None = None,
     alpha: float = 0.85,
 ) -> np.ndarray:
     """
@@ -93,6 +93,9 @@ def draw_ellipses(
     semi_major, semi_minor and orientation (radians, regionprops convention).
     """
     h, w = rgb.shape[:2]
+    if width_px is None:
+        # ~3 px on a 1024 px preview, so the line survives downscaling on screen.
+        width_px = max(2, max(h, w) // 350)
     outline = np.zeros((h, w), dtype=bool)
     for e in ellipses:
         n = max(64, int(8 * np.pi * max(e.semi_major, e.semi_minor)))

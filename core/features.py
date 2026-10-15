@@ -224,38 +224,57 @@ class ChangeCluster:
     pixels: int         # changed pixels in the cluster
 
 
+def _box_mean(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Fraction of True pixels in a (2r+1)-square window around each pixel."""
+    padded = np.pad(mask.astype(np.float64), radius + 1, mode="constant")
+    integral = padded.cumsum(0).cumsum(1)
+    k = 2 * radius + 1
+    h, w = mask.shape
+    total = (
+        integral[k:k + h, k:k + w] - integral[:h, k:k + w]
+        - integral[k:k + h, :w] + integral[:h, :w]
+    )
+    return total / (k * k)
+
+
 def change_clusters(
     mask: np.ndarray,
     max_clusters: int = 5,
     min_share: float = 0.05,
-    merge_frac: float = 0.05,
+    window_frac: float = 0.03,
+    min_density: float = 0.3,
     pad: float = 1.25,
-    min_region_px: int = 10,
 ) -> List[ChangeCluster]:
     """
-    Group changed pixels into a few broad clusters and fit an enclosing
+    Find the few areas where change is concentrated and fit an enclosing
     ellipse to each, largest first.
 
-    Pixels within merge_frac of the image size of each other join the same
-    cluster, so fragmented change (e.g. a patchy burn) reads as one area.
-    Clusters holding less than min_share of all changed pixels are dropped.
-    Each ellipse matches the cluster's second moments, scaled by `pad` and
-    given a minimum radius so small clusters stay visible. Specks under
-    min_region_px are removed first, and a cluster spanning most of the
-    image in both directions is skipped, since change spread across the
-    whole AOI has no area worth circling.
+    Real change masks mix a coherent change area (a burn scar, a flooded
+    plain) with scattered misclassified pixels across the whole AOI, so
+    clusters are found by local density rather than connectivity: a pixel
+    belongs to a change area when at least min_density (or 1.5x the
+    AOI-wide changed fraction, if higher) of a window
+    (window_frac of the image size) around it changed. Patchy change still
+    passes; thin scattered noise does not. Areas holding less than
+    min_share of the dense change are dropped, as is one spanning most of
+    the image in both directions, since there's no single area to point at.
+    Each ellipse matches the area's changed pixels' second moments, scaled
+    by `pad`, with a minimum radius so small areas stay visible.
     """
-    mask = clean_mask(mask, min_region_px)
-    total = int(mask.sum())
-    if total == 0:
+    mask = mask.astype(bool)
+    if not mask.any():
         return []
 
     size = max(mask.shape)
-    merge_px = max(1, int(round(merge_frac * size)))
-    grouped = morphology.dilation(
-        mask, morphology.disk(merge_px, decomposition="sequence")
-    )
-    labels = measure.label(grouped) * mask  # cluster ids on changed pixels only
+    radius = max(1, int(round(window_frac * size / 2)))
+    # Raise the bar when change is common everywhere, so widespread noise
+    # doesn't pass as dense while a real change area still stands out.
+    threshold = min(0.7, max(min_density, 1.5 * mask.mean()))
+    dense = _box_mean(mask, radius) >= threshold
+    labels = measure.label(dense) * mask  # area ids on changed pixels only
+    total = int((labels > 0).sum())
+    if total == 0:
+        return []
 
     min_radius = 0.02 * size
     clusters = []

@@ -440,6 +440,11 @@ def change_display(
     if show_highlight:
         changed = (codes >= 0) & ~np.isin(codes, preset["baseline_codes"])
         clusters = change_clusters(changed)
+        if not clusters and changed.any():
+            st.caption(
+                "No concentrated area of change to circle: detected change is "
+                "scattered across the AOI rather than grouped in one place."
+            )
         rgb_before = draw_ellipses(rgb_before, clusters)
         rgb_after = draw_ellipses(rgb_after, clusters)
 
