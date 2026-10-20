@@ -22,6 +22,7 @@ from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 from skimage import measure
 
+from app.components.recovery_display import recovery_display
 from app.components.scene_loader import (
     load_buildings_cached,
     load_radar_cached,
@@ -37,6 +38,7 @@ from core.findings import change_findings, findings_markdown
 from core.confidence import assess_confidence, change_area_range
 from core.buildings import building_counts, exposure_table
 from core.landcover import landcover_breakdown
+from core.timeseries import RECOVERY_PRESETS
 from core.radar import (
     BRIGHTENING_DB,
     FLOODED_VEGETATION,
@@ -874,3 +876,20 @@ def change_display(
             mime="image/tiff",
             key=f"{key_prefix}_download_class",
         )
+
+    # --- Change over time (opt-in: it loads one scene per period) ---
+    if preset_key in RECOVERY_PRESETS:
+        st.subheader("Change Over Time")
+        if st.toggle(
+            "Track this area over time", key=f"{key_prefix}_over_time",
+            help="Was this the event or the season, and has it recovered since?",
+        ):
+            recovery_display(
+                preset_key, index_name, codes, bands_before["nir"], before_item, after_item, aoi.wkt, key_prefix
+            )
+        else:
+            st.caption(
+                "Follows the changed area and nearby unchanged land through a scene every few months "
+                "around the event, to show whether the change was seasonal and how far it has recovered. "
+                "Loads 10 to 20 scenes, so it's off until switched on."
+            )

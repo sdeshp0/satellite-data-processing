@@ -150,6 +150,19 @@ additional workflows or pages.
   Single Scene (index overlay) or Change Detection (a "damage area"
   outline derived from the classification mask).
 
+### Change Detection: change over time
+- 📈 **Track this area over time** (an opt-in section under the
+  comparison's maps): plots the event's index (NBR, NDWI or NDVI), one least-cloudy scene
+  per period, inside the affected area and on nearby unchanged land.
+- 🌦️ **Event or season?** If unchanged land moved the same way over the
+  same dates, the key findings say much of the change is seasonal.
+- 🌱 **Recovery so far**: the share of the event's gap to unchanged land
+  that has closed by the latest clear scene. Using the gap rather than the
+  raw index cancels most of the seasonal swing.
+- Windows and sampling default per event (fires and logging quarterly over
+  years, floods monthly over months) and can be changed; scenes are read
+  at reduced resolution and cached, capped at 40 per run.
+
 ### Comparison & Data Quality
 A recurring theme in this project: a before/after pair that *looks*
 reasonable by any single metric can still be badly mismatched, and the
@@ -284,7 +297,8 @@ satellite-data-processing/
 │   │   ├── index_display.py      # RGB + spectral index charts + stats
 │   │   ├── change_display.py     # Before/after comparison rendering, swipe compare
 │   │   ├── sample_analyses.py    # Curated one-click event comparisons
-│   │   └── feature_display.py    # Spectral feature identification rendering
+│   │   ├── feature_display.py    # Spectral feature identification rendering
+│   │   └── recovery_display.py   # Change Detection's change-over-time section
 │   │
 │   └── requirements.txt
 │
