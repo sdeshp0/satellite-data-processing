@@ -209,7 +209,7 @@ def feature_display(
         else:
             st.caption("Select a single feature type to download its mask as GeoTIFF.")
 
-    _landcover_section(bands["nir"], has_data, key_prefix)
+    _landcover_section(bands["nir"], has_data, item.datetime.year, key_prefix)
 
     st.caption(
         "Want road locations? Deriving roads from spectral reflectance "
@@ -219,13 +219,13 @@ def feature_display(
     )
 
 
-def _landcover_section(reference, has_data: np.ndarray, key_prefix: str) -> None:
+def _landcover_section(reference, has_data: np.ndarray, scene_year: int, key_prefix: str) -> None:
     """ESA WorldCover composition of the AOI, with an optional class map."""
     st.markdown("**Land cover in this AOI**")
     grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
     try:
         with st.spinner("Loading land cover..."):
-            landcover, year = load_worldcover_cached(reference, grid_key)
+            landcover, year = load_worldcover_cached(reference, grid_key, scene_year)
     except Exception as exc:  # network/data problems shouldn't break the page
         st.caption(
             "Land-cover data couldn't be loaded from Planetary Computer "

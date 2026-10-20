@@ -11,6 +11,7 @@ from core.landcover import (
     landcover_breakdown,
     landcover_composition,
     landcover_rgb,
+    pick_worldcover_year,
     worldcover_on_grid,
     worldcover_year,
 )
@@ -109,3 +110,10 @@ def test_landcover_rgb_uses_class_colours():
     rgb = landcover_rgb(np.array([[50, 0]], dtype=np.uint8))
     assert tuple(rgb[0, 0]) == (250, 0, 0)
     assert tuple(rgb[0, 1]) == (255, 255, 255)
+
+
+def test_pick_worldcover_year_prefers_edition_before_the_scene():
+    assert pick_worldcover_year([2020, 2021], as_of=2022) == 2021
+    assert pick_worldcover_year([2020, 2021], as_of=2020) == 2020
+    assert pick_worldcover_year([2020, 2021], as_of=2018) == 2020
+    assert pick_worldcover_year([2020, 2021]) == 2021

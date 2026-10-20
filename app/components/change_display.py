@@ -545,7 +545,9 @@ def change_display(
         grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
         try:
             with st.spinner("Loading land cover..."):
-                landcover, landcover_year = load_worldcover_cached(reference, grid_key)
+                landcover, landcover_year = load_worldcover_cached(
+                    reference, grid_key, before_item.datetime.year
+                )
             if landcover is not None:
                 landcover_df = landcover_breakdown(landcover, changed, codes >= 0, px_ha)
         except Exception as exc:  # network/data problems shouldn't break the page
@@ -593,10 +595,17 @@ def change_display(
     st.markdown("**What the change affected**")
     if landcover_df is not None and not landcover_df.empty:
         st.dataframe(landcover_df, hide_index=True, width="stretch")
-        st.caption(
+        landcover_note = (
             f"Land cover from ESA WorldCover {landcover_year} (10 m). \"Share of this "
             "land cover changed\" is the changed fraction of that class's analysed area."
         )
+        if landcover_year > before_item.datetime.year:
+            landcover_note += (
+                f" The earliest edition postdates the before scene "
+                f"({before_item.datetime.year}), so land that changed may already "
+                "show its new class, e.g. burned forest as grassland."
+            )
+        st.caption(landcover_note)
     elif landcover_error:
         st.caption(
             f"Land-cover data couldn't be loaded from Planetary Computer "

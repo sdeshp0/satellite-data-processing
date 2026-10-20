@@ -65,6 +65,7 @@ def main() -> int:
     parser.add_argument("--lat", type=float)
     parser.add_argument("--lon", type=float)
     parser.add_argument("--size-km", type=float)
+    parser.add_argument("--as-of", type=int, help="scene year; picks the WorldCover edition from then or earlier")
     parser.add_argument("--res", type=float, default=20.0, help="grid resolution in metres (default 20)")
     args = parser.parse_args()
 
@@ -121,7 +122,7 @@ def main() -> int:
 
     _step("3. search_worldcover (what the app uses)")
     try:
-        result = lc.search_worldcover(reference)
+        result = lc.search_worldcover(reference, args.as_of)
         found, year = result if isinstance(result, tuple) else (result, None)
         print(f"{len(found)} item(s), year {year}: {[item.id for item in found]}")
     except Exception:

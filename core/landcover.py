@@ -51,8 +51,24 @@ def worldcover_year(item: Any) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
-def search_worldcover(reference: xr.DataArray) -> Tuple[List[Any], int]:
-    """WorldCover items covering the reference grid, latest year only, and that year (0 if none)."""
+def pick_worldcover_year(years: Sequence[int], as_of: Optional[int] = None) -> int:
+    """
+    The WorldCover edition to use: the latest one from `as_of` or earlier,
+    so land cover reflects the scene before a change rather than after it.
+    Falls back to the earliest edition when all are newer, and to the
+    latest when `as_of` is None.
+    """
+    if as_of is None:
+        return max(years)
+    earlier = [y for y in years if y <= as_of]
+    return max(earlier) if earlier else min(years)
+
+
+def search_worldcover(reference: xr.DataArray, as_of: Optional[int] = None) -> Tuple[List[Any], int]:
+    """
+    WorldCover items covering the reference grid for one edition (see
+    pick_worldcover_year), and that edition's year (0 if none).
+    """
     from pystac_client import Client
 
     bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
@@ -63,8 +79,8 @@ def search_worldcover(reference: xr.DataArray) -> Tuple[List[Any], int]:
     if not items:
         return [], 0
     years = {id(item): worldcover_year(item) or 0 for item in items}
-    latest = max(years.values())
-    return [item for item in items if years[id(item)] == latest], latest
+    year = pick_worldcover_year(list(years.values()), as_of)
+    return [item for item in items if years[id(item)] == year], year
 
 
 def _signed(href: str) -> str:
