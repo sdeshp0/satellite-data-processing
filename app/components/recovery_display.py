@@ -6,7 +6,6 @@ land (see core.timeseries).
 
 from __future__ import annotations
 
-import hashlib
 from datetime import date
 from typing import Any, List, Tuple
 
@@ -18,15 +17,21 @@ from rasterio.enums import Resampling
 
 from app.components.scene_loader import load_scene_cached
 from app.components.scene_selector import _search_sentinel2_cached
-from core.change import _scl_valid_mask, align_to_reference
+from core.change import _scl_valid_mask, align_to_reference, format_area, pixel_area_ha
 from core.findings import findings_markdown
 from core.indices import compute_indices
 from core.timeseries import (
+    LATEST_SCENES,
+    RECOVERY_BREAKS,
+    RECOVERY_COLORS,
+    RECOVERY_LABELS,
     RECOVERY_PRESETS,
     SamplePoint,
     add_months,
     pick_scenes,
     recovery_findings,
+    recovery_map,
+    recovery_map_findings,
     recovery_summary,
     sample_point,
 )
@@ -39,39 +44,40 @@ AFFECTED_COLOR = "#eb6834"
 CONTROL_COLOR = "#2a78d6"
 
 
-def _scene_point(item: Any, aoi_wkt: str, index_name: str, reference, affected, control) -> SamplePoint:
-    """Load one scene, compute the index on the reference grid and summarise both areas."""
+def _scene_index(item: Any, aoi_wkt: str, index_name: str, reference) -> np.ndarray:
+    """One scene's index on the reference grid, NaN where it isn't clear."""
     bands, _, _ = load_scene_cached(item, aoi_wkt, item.id, SCENE_MAX_DIM)
     bands = scale_bands(resample_bands(bands))
     index = compute_indices(bands)[index_name]
     valid = _scl_valid_mask(bands["scl"].values)
     index = align_to_reference(np.where(valid, index, np.nan), bands["nir"], reference)
     valid = align_to_reference(valid.astype("float32"), bands["nir"], reference, Resampling.nearest) > 0.5
-    return sample_point(index, valid, affected, control, item.datetime.date())
+    return np.where(valid, index, np.nan)
 
 
 @st.cache_data(show_spinner=False, ttl=24 * 3600)
-def _scene_point_cached(
-    _item: Any, item_id: str, aoi_wkt: str, index_name: str, _reference, _affected, _control, grid_key: str
-) -> SamplePoint:
-    """_scene_point, cached on the scene id, index and grid (with the change classes)."""
-    return _scene_point(_item, aoi_wkt, index_name, _reference, _affected, _control)
+def _scene_index_cached(_item: Any, item_id: str, aoi_wkt: str, index_name: str, _reference, grid_key: str) -> np.ndarray:
+    """_scene_index, cached on the scene id, index and grid; float16 to keep the cache small."""
+    return _scene_index(_item, aoi_wkt, index_name, _reference).astype(np.float16)
 
 
-def _sample_points(
+def _load_series(
     scenes: List[Any], aoi_wkt: str, index_name: str, reference, affected, control, grid_key: str
-) -> Tuple[List[SamplePoint], List[str]]:
-    """Sample points for each scene, plus the scenes that failed to load."""
-    points, failed = [], []
+) -> Tuple[List[SamplePoint], List[np.ndarray], List[str]]:
+    """Sample points and index grids for each scene that loaded, plus the scenes that failed."""
+    points, grids, failed = [], [], []
     progress = st.progress(0.0, text="Loading scenes...")
     for i, item in enumerate(scenes):
         progress.progress(i / len(scenes), text=f"Loading scene {i + 1} of {len(scenes)} ({item.datetime.date()})")
         try:
-            points.append(_scene_point_cached(item, item.id, aoi_wkt, index_name, reference, affected, control, grid_key))
+            index = _scene_index_cached(item, item.id, aoi_wkt, index_name, reference, grid_key).astype(np.float32)
         except Exception as exc:  # one bad scene shouldn't sink the series
             failed.append(f"{item.datetime.date()} ({type(exc).__name__})")
+            continue
+        points.append(sample_point(index, np.isfinite(index), affected, control, item.datetime.date()))
+        grids.append(index)
     progress.empty()
-    return points, failed
+    return points, grids, failed
 
 
 def _chart(points: List[SamplePoint], preset, index_name: str, before: date, after: date) -> alt.Chart:
@@ -100,6 +106,30 @@ def _chart(points: List[SamplePoint], preset, index_name: str, before: date, aft
         opacity=0.15, color="gray"
     ).encode(x="start:T", x2="end:T")
     return (event + lines + dots).properties(height=360)
+
+
+def _render_recovery_map(codes: np.ndarray, px_ha: float, preset) -> None:
+    """The recovery classes as a map, with their areas."""
+    from app.components.change_display import _plot_classification  # imports this module
+
+    st.markdown("**Recovery map**")
+    map_col, table_col = st.columns([3, 2])
+    with map_col:
+        st.pyplot(_plot_classification(codes, RECOVERY_LABELS, RECOVERY_COLORS, "Recovery since the event"))
+    with table_col:
+        total = max(int((codes >= 0).sum()), 1)
+        st.dataframe(pd.DataFrame([{
+            "Class": label,
+            "Area": format_area(int((codes == code).sum()) * px_ha),
+            "Share (%)": round(100 * int((codes == code).sum()) / total),
+        } for code, label in RECOVERY_LABELS.items()]), hide_index=True, width="stretch")
+        low, high = RECOVERY_BREAKS
+        st.caption(
+            f"Each pixel of {preset.area_name}: how much of its gap to {preset.control_name} at the event has "
+            f"closed by the last {LATEST_SCENES} clear scenes. Under {low:.0f}% is little or no recovery, "
+            f"{low:.0f}-{high:.0f}% recovering, over {high:.0f}% recovered. \"No clear event change\" pixels "
+            "were flagged but barely differed from unchanged land on these dates."
+        )
 
 
 def recovery_display(
@@ -133,17 +163,22 @@ def recovery_display(
     if not affected.any():
         st.info(f"The comparison found no {preset.area_name.removeprefix('the ')}, so there's nothing to track.")
         return
-    grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}|{hashlib.md5(codes.tobytes()).hexdigest()}"
-    points, failed = _sample_points(scenes, aoi_wkt, index_name, reference, affected, control, grid_key)
+    grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
+    points, grids, failed = _load_series(scenes, aoi_wkt, index_name, reference, affected, control, grid_key)
     clear = [p for p in points if p.gap is not None]
 
     summary = recovery_summary(points, before, after)
+    map_codes = recovery_map(
+        [(p.when, grid, p.control) for p, grid in zip(points, grids)], affected, before, after
+    )
+    px_ha = pixel_area_ha(reference)
     with st.container(border=True):
         st.markdown("**Over time**")
         if summary is None:
             st.markdown("Not enough clear scenes around the event dates to measure change and recovery.")
         else:
-            lines = findings_markdown(recovery_findings(summary, preset, index_name))
+            found = recovery_findings(summary, preset, index_name) + recovery_map_findings(map_codes, px_ha, preset)
+            lines = findings_markdown(found)
             st.markdown("\n".join(part for part in (lines["summary"], lines["caveats"]) if part))
 
     if summary is not None:
@@ -162,6 +197,9 @@ def recovery_display(
             f"month{'s' if step > 1 else ''} (least cloudy), plus the Change Detection pair. "
             "The shaded band spans the before and after dates."
         )
+    if (map_codes >= 0).any():
+        _render_recovery_map(map_codes, px_ha, preset)
+
     skipped = [p for p in points if p.gap is None]
     notes = []
     if skipped:

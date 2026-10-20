@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from core.findings import Finding
+from core.change import format_area
+from core.findings import Finding, change_location
 
 
 @dataclass(frozen=True)
@@ -196,3 +197,81 @@ def recovery_findings(summary: RecoverySummary, preset: RecoveryPreset, index_na
             f"pre-event {name}, measured against {preset.control_name} ({state}).",
         ))
     return out
+
+
+# --- Recovery map: the same gap, pixel by pixel ---------------------------
+
+RECOVERY_LABELS: Dict[int, str] = {
+    0: "Little or No Recovery",
+    1: "Recovering",
+    2: "Recovered",
+    3: "No Clear Event Change",
+}
+RECOVERY_COLORS: Dict[int, str] = {
+    0: "#c7e9c0",
+    1: "#74c476",
+    2: "#1b7837",
+    3: "#d9d9d9",
+}
+# Upper bounds (in % of the event gap closed) of "little" and "recovering".
+RECOVERY_BREAKS = (25.0, 75.0)
+# The latest state per pixel is the median of this many final clear scenes,
+# so one scene's leftover haze doesn't decide it.
+LATEST_SCENES = 2
+
+
+def recovery_map(
+    scenes: Sequence[Tuple[date, np.ndarray, Optional[float]]],
+    affected: np.ndarray,
+    before_date: date,
+    after_date: date,
+) -> np.ndarray:
+    """
+    Recovery classes (RECOVERY_LABELS) for each affected pixel; -1 elsewhere
+    and where a stage has no clear view.
+
+    `scenes` are (date, index on the grid with NaN where not clear, median
+    index of the unchanged land or None). Each pixel's gap to unchanged land
+    is taken before the event (median of the scenes up to `before_date`),
+    at the event (the first scene from `after_date`) and now (median of the
+    last LATEST_SCENES scenes after it); the share of the event gap closed
+    since sets the class.
+    """
+    usable = [(when, index - control) for when, index, control in scenes if control is not None]
+    pre = [gap for when, gap in usable if when <= before_date]
+    post = [(when, gap) for when, gap in usable if when >= after_date]
+    codes = np.full(affected.shape, -1, dtype=np.int8)
+    if not pre or len(post) < 2:
+        return codes
+
+    with np.errstate(all="ignore"):  # all-NaN pixels and empty slices give NaN, as intended
+        baseline = np.nanmedian(np.stack(pre), axis=0)
+        event = post[0][1]
+        latest = np.nanmedian(np.stack([gap for _, gap in post[1:][-LATEST_SCENES:]]), axis=0)
+        drop = baseline - event
+        pct = 100 * (latest - event) / drop
+
+    known = affected & np.isfinite(baseline) & np.isfinite(event) & np.isfinite(latest)
+    small = known & (np.abs(drop) < MIN_EVENT_GAP)
+    measured = known & ~small
+    codes[measured] = np.digitize(pct[measured], RECOVERY_BREAKS)
+    codes[small] = 3
+    return codes
+
+
+def recovery_map_findings(codes: np.ndarray, pixel_area_ha: float, preset: RecoveryPreset) -> List[Finding]:
+    """Shares of the measured affected area in each recovery class, and where it lags."""
+    measured = np.isin(codes, (0, 1, 2))
+    n = int(measured.sum())
+    if not n:
+        return []
+    share = {c: 100 * int((codes == c).sum()) / n for c in (0, 1, 2)}
+    text = (
+        f"Pixel by pixel, {share[2]:.0f}% of {preset.area_name} with a clear view has recovered, "
+        f"{share[1]:.0f}% is recovering and {share[0]:.0f}% shows little or no recovery"
+    )
+    lagging = codes == 0
+    where = change_location(lagging)
+    if share[0] >= 10 and where and where != "spread":
+        text += f", concentrated in the {where} ({format_area(lagging.sum() * pixel_area_ha)})"
+    return [Finding("detail", text + ".")]
