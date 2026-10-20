@@ -116,7 +116,7 @@ additional workflows or pages.
   GeoTIFFs.
 - ⚡ **Sample analyses**: 11 one-click, pre-configured comparisons against
   real events -- Camp Fire (CA), Kangaroo Island bushfires (Australia),
-  Hurricane Harvey flooding (Houston), Amazon deforestation (Rondônia),
+  monsoon flooding in Sindh (Pakistan), Amazon deforestation (Rondônia),
   Dixie Fire (CA), the Mati wildfire (Greece), Lake Mead's drought-driven
   water-level decline, Gran Chaco deforestation (Paraguay), Missouri
   River flooding (Nebraska/Iowa), Murray-Darling Basin flooding
@@ -234,9 +234,9 @@ python check_sample_coverage.py --sample lake_mead_drought    # check just one
 python check_sample_coverage.py --both-threshold 70           # stricter pass/fail bar
 python check_sample_coverage.py --max-dim 256                 # faster, coarser pass
 python check_sample_coverage.py --no-mosaic                   # A/B: disable mosaicking to see its cost/benefit
-python check_sample_coverage.py --sample harvey_houston_2017 \
-    --before-start 2017-01-01 --before-end 2017-02-28 \
-    --after-start 2017-10-01 --after-end 2017-10-31           # test a specific date window without editing source
+python check_sample_coverage.py --sample sindh_flood_2022 \
+    --before-start 2022-05-01 --before-end 2022-06-30 \
+    --after-start 2022-09-01 --after-end 2022-09-30           # test a specific date window without editing source
 ```
 
 It flags any sample below the usable-both-dates threshold, and reports an

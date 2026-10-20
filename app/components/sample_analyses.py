@@ -124,33 +124,24 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
             "Flinders Chase National Park."
         ),
     },
-    "harvey_houston_2017": {
-        "label": "Hurricane Harvey Flooding — Houston, TX (Jan \u2192 Oct 2017)",
+    "sindh_flood_2022": {
+        "label": "Monsoon Flooding — Sindh, Pakistan (Jun \u2192 Sep 2022)",
         "preset": "flood",
-        "lat": 29.7604, "lon": -95.3698, "width_km": 40, "height_km": 40,
-        "before_range": (date(2017, 1, 1), date(2017, 2, 28)),
-        "after_range": (date(2017, 10, 1), date(2017, 10, 31)),
+        "lat": 26.60, "lon": 67.75, "width_km": 40, "height_km": 40,
+        "before_range": (date(2022, 5, 1), date(2022, 6, 30)),
+        "after_range": (date(2022, 9, 1), date(2022, 9, 30)),
+        # Sentinel-1 passes on one descending track: pre-monsoon baseline
+        # and 30 August, near the flood's peak extent.
+        "radar_dates": (date(2022, 6, 19), date(2022, 8, 30)),
         "description": (
-            "Hurricane Harvey stalled over southeast Texas in late August "
-            "2017, dropping historic rainfall and causing catastrophic "
-            "flooding across the Houston metro area. Windows went through "
-            "several rounds of coverage testing: the original Jun-Jul "
-            "before-window (summer, peak Gulf Coast thunderstorm season) "
-            "landed only 3.7% usable-both despite reportedly moderate "
-            "cloud (AOI-local cloud not visible in whole-scene metadata); "
-            "shifting the after-window to October improved that to 32.6%, "
-            "and a spring (Apr-May) before-window improved it further to "
-            "50.1% -- still short. Winter (Jan-Feb), Houston's driest "
-            "season in its humid subtropical climate, is what actually "
-            "resolved it: 98.0% usable-both, 1% cloud on both dates. The "
-            "tradeoff is a before-baseline about 7 months pre-event rather "
-            "than 1, similar in spirit to the multi-month/multi-year gaps "
-            "already used elsewhere in this file (e.g. rondonia_"
-            "deforestation, camp_fire_2018). If a fresher pre-storm "
-            "baseline ever matters more than reliable coverage, Sentinel-1 "
-            "SAR (sees through cloud) would be the more direct fix for "
-            "hurricane-flood comparisons specifically -- not needed here "
-            "since a clear optical pair turned out to exist after all."
+            "Record monsoon rain in summer 2022 put roughly a third of "
+            "Pakistan under water. Around Dadu and Manchar Lake in Sindh, "
+            "the Indus floodplain stayed flooded for weeks as water spread "
+            "across flat farmland. Monsoon cloud often hides the peak from "
+            "optical satellites, so this sample leans on the Sentinel-1 "
+            "radar map, opened at the 30 August pass. Open water over "
+            "fields is radar's best case, unlike urban flooding such as "
+            "Hurricane Harvey's in Houston, which this sample replaced."
         ),
     },
     "rondonia_deforestation": {
