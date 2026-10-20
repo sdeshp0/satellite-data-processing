@@ -23,7 +23,7 @@ dependencies:
   - planetary-computer
 
   # Streamlit + Folium-based maps
-  - streamlit>=1.50
+  - streamlit>=1.56
   - leafmap>=0.31
 
   # Jupyter (optional but useful)
