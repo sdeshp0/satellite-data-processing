@@ -16,7 +16,7 @@ Microsoft Planetary Computer. The project provides a modular pipeline for:
 - running before/after change detection for wildfire, flood, and logging
   events, using established remote-sensing methodologies, with extensive
   built-in checks that a comparison is actually apples-to-apples -- grid
-  alignment, radiometric offset correction, seasonal/illumination
+  alignment, radiometric offset correction, seasonal
   matching, and pixel-level coverage-overlap verification
 - highlighting water, urban, vegetation, and bare-soil extent directly on a
   scene via spectral thresholding and contour extraction
@@ -82,9 +82,8 @@ additional workflows or pages.
   tertiary) rather than a hard rule on any one factor, since real testing
   showed any single absolute veto could force a badly-clouded pick over a
   much clearer alternative. Manual override is always available via
-  either scene-picker table below it, which also shows the delta in
-  day-of-year and sun elevation against whatever's selected on the other
-  side.
+  either scene-picker table below it, which also shows the day-of-year
+  difference against whatever's selected on the other side.
 - 🧩 **Multi-tile mosaicking**: Sentinel-2 tiles sit on a fixed ~110km
   grid, independent of any AOI drawn on top of it -- an AOI near a tile
   boundary can have a real chunk of it fall outside whichever single tile
@@ -102,8 +101,7 @@ additional workflows or pages.
   computed from.
 - 🧭 **Comparability checks**: warns when before/after scenes differ in
   UTM zone, MGRS tile, Sentinel-2 platform (2A/2B cross-calibration), or
-  are seasonally/illumination mismatched (day-of-year distance, sun
-  elevation difference) -- any of which can introduce a signal that looks
+  are seasonally mismatched (day-of-year distance) -- any of which can introduce a signal that looks
   like "change" but isn't.
 - 🔀 **Before/After swipe compare**: an interactive slider revealing more
   or less of the before/after RGB (or the active index, colorized to
@@ -176,15 +174,14 @@ failure modes compound in non-obvious ways. What's checked, and where:
   something an earlier version of this check missed.
 - **Comparability warnings**: UTM zone, MGRS tile, Sentinel-2 platform
   (2A vs 2B carry a small documented ~1.1% VNIR cross-calibration
-  difference), seasonal (day-of-year) distance, and sun elevation
-  difference are all checked and surfaced for whichever pair is
+  difference) and seasonal (day-of-year) distance are all checked and surfaced for whichever pair is
   currently loaded.
 - **Automatic selection quality**: the same checks above inform automatic
   best-pair selection (see Change Detection), so problems are avoided
   where possible rather than only flagged after the fact.
 - **Scene picker visibility**: the thumbnail table shows NoData %, MGRS
-  tile, UTM zone, and (when comparing) the day-of-year and sun-elevation
-  delta against whatever's selected on the other side -- so a bad pairing
+  tile, UTM zone, and (when comparing) the day-of-year difference
+  against whatever's selected on the other side -- so a bad pairing
   is visible before a scene is even loaded, not just after.
 - **Whole-scene grid alignment**: the "after" scene's bands are aligned
   onto the "before" scene's grid immediately after loading (and after any

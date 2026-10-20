@@ -8,7 +8,7 @@ Scene selection within each sample's date range is automatic -- asking a
 first-time visitor to also pick a scene manually would defeat the point of
 a "one click" sample. The pair is chosen jointly (see
 core.change.select_best_pair, shared with the manual Change Detection
-page's automatic pre-selection) to favor a seasonally/illumination-matched
+page's automatic pre-selection) to favor a season-matched
 before/after pair, using combined cloud cover only as a tiebreaker --
 picking each side's lowest-cloud scene independently (the original
 approach) could pair a summer "before" with a winter "after" purely
@@ -386,7 +386,7 @@ def _run_sample_analysis(key: str) -> None:
     # Note this reflects what the SEARCH needed to return any results at
     # all, not the cloud cover of the specific pair ultimately chosen --
     # any comparability concerns about the chosen pair itself (seasonal
-    # distance, sun elevation, UTM/tile/platform) surface separately via
+    # distance, UTM/tile/platform) surface separately via
     # core.change.comparability_checks on the comparison page below.
     notes = []
     if before_cloud > 40 or before_expand > 0:
@@ -413,8 +413,8 @@ def sample_analysis_picker() -> None:
     st.caption(
         "Real, well-documented before/after events, pre-configured end to "
         "end -- AOI, dates, and event type all set automatically. The "
-        "before/after scene pair is chosen to be seasonally and "
-        "illumination-matched, not just individually low-cloud."
+        "before/after scene pair is chosen to be seasonally matched, "
+        "not just individually low-cloud."
     )
 
     options = ["-- Select a sample --"] + list(SAMPLE_ANALYSES.keys())

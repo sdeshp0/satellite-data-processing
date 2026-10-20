@@ -18,7 +18,7 @@ from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
 
 from core.stac import search_sentinel2
-from core.change import day_of_year_distance, sun_elevation_diff, granule_coverage_pct
+from core.change import day_of_year_distance, granule_coverage_pct
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -158,9 +158,9 @@ def scene_picker(
     compare_item : pystac.Item, optional
         The scene already selected on the "other side" of a before/after
         comparison, if any (e.g. pass the current after-scene when
-        rendering the before-picker). When given, adds "Δ Day-of-Year" and
-        "Δ Sun Elev (°)" columns computed against it, so a seasonal or
-        illumination mismatch is visible *before* committing to a pair --
+        rendering the before-picker). When given, adds a "Δ Day-of-Year"
+        column computed against it, so a seasonal mismatch is visible
+        *before* committing to a pair --
         see core.change.comparability_checks for the same checks applied
         after a pair is fully loaded.
     default_min_coverage : int
@@ -224,16 +224,13 @@ def scene_picker(
             row["\u0394 Day-of-Year"] = day_of_year_distance(
                 item.datetime.date(), compare_item.datetime.date()
             )
-            elev_diff = sun_elevation_diff(item, compare_item)
-            row["\u0394 Sun Elev (\u00b0)"] = round(elev_diff, 1) if elev_diff is not None else None
         rows.append(row)
     df = pd.DataFrame(rows)
 
     if compare_item is not None:
         st.caption(
-            "\u0394 Day-of-Year and \u0394 Sun Elev are shown relative to "
-            "the scene currently selected on the other side -- lower is a "
-            "closer seasonal/illumination match."
+            "\u0394 Day-of-Year is shown relative to the scene currently "
+            "selected on the other side -- lower is a closer seasonal match."
         )
 
     column_config = {
@@ -247,10 +244,6 @@ def scene_picker(
     if compare_item is not None:
         column_config["\u0394 Day-of-Year"] = st.column_config.NumberColumn(
             help="Circular day-of-year distance from the other side's selected scene (ignores year) -- lower means a closer seasonal match.",
-        )
-        column_config["\u0394 Sun Elev (\u00b0)"] = st.column_config.NumberColumn(
-            format="%.1f",
-            help="Absolute difference in sun elevation from the other side's selected scene -- lower means more similar shadows/illumination.",
         )
 
     with st.expander("Available scenes", expanded=True):

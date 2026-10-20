@@ -219,7 +219,6 @@ def index_display(
         st.write(f"**Acquired:** {item.datetime}")
         st.write(f"**Cloud cover:** {props.get('eo:cloud_cover', 'N/A')}%")
         st.write(f"**Platform:** {props.get('platform', 'N/A')}")
-        st.write(f"**Sun elevation:** {props.get('view:sun_elevation', 'N/A')}")
         st.write(
             f"**Processing baseline:** {props.get('s2:processing_baseline', 'N/A')} "
             "(baseline \u2265 4.00 has a radiometric offset correction "
