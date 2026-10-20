@@ -19,8 +19,7 @@ event-specific classification using established remote-sensing methodologies.
 Also includes before/after *comparability* checks (core.change.comparability_checks
 and comparability_score) -- a scene pair can be geometrically alignable
 (see align_bands below) while still not being apples-to-apples: different
-UTM zones/tiles, different platforms, different season, or different sun
-angle can all introduce a signal that looks like "change" but isn't. These
+UTM zones/tiles, different platforms, or a different season can all introduce a signal that looks like "change" but isn't. These
 checks are shared between app/components/change_display.py (surfacing
 warnings for a pair the user already picked) and
 app/components/sample_analyses.py / scene_selector.py (scoring/selecting
@@ -244,14 +243,6 @@ class ComparabilityNote:
 SEASONAL_INFO_DAYS = 20
 SEASONAL_WARNING_DAYS = 45
 
-# Sun elevation angle (degrees) thresholds. A large difference changes
-# shadow length/direction and terrain shading independent of any real
-# surface change -- most visible in hilly terrain or wherever tall
-# vegetation/structures cast shadows across the AOI.
-SUN_ELEV_INFO_DEG = 10.0
-SUN_ELEV_WARNING_DEG = 20.0
-
-
 def day_of_year_distance(date_before: _date, date_after: _date) -> int:
     """
     Circular day-of-year distance between two dates, ignoring year -- e.g.
@@ -267,23 +258,11 @@ def day_of_year_distance(date_before: _date, date_after: _date) -> int:
     return min(diff, 365 - diff)
 
 
-def sun_elevation_diff(before_item, after_item) -> Optional[float]:
-    """
-    Absolute difference in view:sun_elevation (degrees) between two STAC
-    items, or None if either item lacks the field.
-    """
-    before_elev = before_item.properties.get("view:sun_elevation")
-    after_elev = after_item.properties.get("view:sun_elevation")
-    if before_elev is None or after_elev is None:
-        return None
-    return abs(float(after_elev) - float(before_elev))
-
-
 def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
     """
     Run all before/after comparability checks and return their findings, in
     a fixed order (roughly most-likely-to-matter first): UTM zone, MGRS
-    tile, platform, seasonal (day-of-year) distance, sun elevation.
+    tile, platform, seasonal (day-of-year) distance.
 
     Parameters
     ----------
@@ -354,27 +333,6 @@ def comparability_checks(before_item, after_item) -> List[ComparabilityNote]:
             "for anything sensitive to seasonal vegetation change.",
         ))
 
-    elev_diff = sun_elevation_diff(before_item, after_item)
-    if elev_diff is not None:
-        if elev_diff >= SUN_ELEV_WARNING_DEG:
-            notes.append(ComparabilityNote(
-                "warning",
-                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0 between "
-                "the two scenes. This changes shadow length/direction and "
-                "terrain shading independent of any real surface change -- "
-                "most noticeable in hilly terrain or areas with tall "
-                "vegetation/structures.",
-                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0, so shadow changes "
-                "may show up as false change in hilly or forested terrain.",
-            ))
-        elif elev_diff >= SUN_ELEV_INFO_DEG:
-            notes.append(ComparabilityNote(
-                "info",
-                f"Sun elevation differs by ~{elev_diff:.0f}\u00b0 between "
-                "the two scenes -- shadows will look somewhat different "
-                "between dates.",
-            ))
-
     return notes
 
 
@@ -435,7 +393,7 @@ def select_best_pair(
 ) -> Optional[Tuple[Any, Any]]:
     """
     Choose the before/after pair, from two independently-searched result
-    lists, with the best comparability_score (season, sun-angle, cloud --
+    lists, with the best comparability_score (season, then cloud --
     see that function) among a candidate pool built by progressively
     RELAXING preferences, not applying them as absolute vetoes:
 
@@ -446,7 +404,7 @@ def select_best_pair(
          module docstring's discussion of AOI-local vs whole-scene cloud
          percentages). If NO pair is that clear, every pair stays in play
          and the function falls through to comparability_score's own
-         (season, sun, cloud) ordering as a last resort.
+         (season, cloud) ordering as a last resort.
       2. Within the clear-enough pool, season is a secondary preference:
          pairs within max_season_distance_for_preference days (default
          45, same bound as SEASONAL_WARNING_DAYS) are preferred; if none
@@ -561,7 +519,7 @@ def select_best_pair(
     return min(candidate_pool, key=lambda pair: comparability_score(pair[0], pair[1]))
 
 
-def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
+def comparability_score(before_item, after_item) -> Tuple[float, float]:
     """
     Sortable score for ranking candidate before/after pairs -- lower is
     better on every component, and the tuple is meant to be used directly
@@ -572,25 +530,22 @@ def comparability_score(before_item, after_item) -> Tuple[float, float, float]:
 
     Returns
     -------
-    tuple(float, float, float)
-        (day_of_year_distance, sun_elevation_diff_or_0, combined_cloud_cover)
-        Seasonal and illumination match are prioritized first (they're the
-        harder-to-fix, more distorting mismatches); combined cloud cover
+    tuple(float, float)
+        (day_of_year_distance, combined_cloud_cover)
+        Seasonal match is prioritized first (the harder-to-fix, more
+        distorting mismatch); combined cloud cover
         is the final tiebreaker among otherwise-similar pairs. Picking
         each side's lowest-cloud scene independently (the simpler
         alternative to using this at all) can easily land on a pair
-        that's individually clear but seasonally or illumination-
-        mismatched -- exactly what comparability_checks warns about once
+        that's individually clear but seasonally mismatched -- exactly what comparability_checks warns about once
         a pair is actually loaded.
     """
     doy_dist = day_of_year_distance(before_item.datetime.date(), after_item.datetime.date())
-    elev_diff = sun_elevation_diff(before_item, after_item)
-    elev_component = elev_diff if elev_diff is not None else 0.0
     cloud = (
         before_item.properties.get("eo:cloud_cover", 100)
         + after_item.properties.get("eo:cloud_cover", 100)
     )
-    return (float(doy_dist), float(elev_component), float(cloud))
+    return (float(doy_dist), float(cloud))
 
 
 # --- Delta -------------------------------------------------------------------

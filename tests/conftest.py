@@ -35,12 +35,11 @@ def make_da(values, res=10.0, origin=(500_000.0, 4_400_000.0), crs=UTM_10N, name
     return da.rio.write_transform(transform)
 
 
-def make_item(item_id, when, cloud=10.0, tile="10SFH", sun_elevation=50.0, nodata_pct=0.0, **extra):
+def make_item(item_id, when, cloud=10.0, tile="10SFH", nodata_pct=0.0, **extra):
     """Minimal stand-in for a pystac.Item with the properties core/ reads."""
     properties = {
         "eo:cloud_cover": cloud,
         "s2:mgrs_tile": tile,
-        "view:sun_elevation": sun_elevation,
         "s2:nodata_pixel_percentage": nodata_pct,
         **extra,
     }

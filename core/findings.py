@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
+import pandas as pd
 
 from core.change import ChangeAreaSummary, ComparabilityNote, format_area
 
@@ -26,6 +27,10 @@ CONCENTRATION_SHARE = 0.4
 MIN_PIXELS_FOR_LOCATION = 50
 # Below this analysed share of the AOI window, totals are a lower bound.
 LOW_COVERAGE_PCT = 90.0
+# Land-cover classes holding at least this share of the change get named.
+LANDCOVER_MIN_SHARE_PCT = 5.0
+# Built-up land in the change area is called out from this many hectares.
+BUILT_UP_MIN_HA = 1.0
 
 _SECTOR_NAMES = [
     ["north-west", "north", "north-east"],
@@ -108,6 +113,26 @@ def _custom(codes, px_ha, area, index_name: str) -> List[Finding]:
 _HEADLINES = {"wildfire": _wildfire, "flood": _flood, "logging": _logging}
 
 
+def _landcover_findings(landcover: pd.DataFrame) -> List[Finding]:
+    """What the change fell on: the main land-cover classes and any built-up land."""
+    share_col = "Share of detected change (%)"
+    main = landcover[landcover[share_col] >= LANDCOVER_MIN_SHARE_PCT].head(2)
+    out = []
+    if not main.empty:
+        parts = [f"{row['Land cover'].lower()} ({row[share_col]:.0f}%)" for _, row in main.iterrows()]
+        text = f"Most of the change was on {parts[0]}"
+        if len(parts) > 1:
+            text += f", followed by {parts[1]}"
+        out.append(Finding("detail", text + "."))
+    built = landcover[landcover["Land cover"] == "Built-up"]
+    if not built.empty and built["Changed area (ha)"].iloc[0] >= BUILT_UP_MIN_HA:
+        out.append(Finding(
+            "detail",
+            f"{format_area(built['Changed area (ha)'].iloc[0])} of built-up land falls in the change area.",
+        ))
+    return out
+
+
 def change_location(changed: np.ndarray) -> Optional[str]:
     """
     Where changed pixels sit in the AOI, assuming a north-up grid: the name
@@ -136,11 +161,13 @@ def change_findings(
     pixel_area_ha: float,
     notes: Sequence[ComparabilityNote] = (),
     index_name: str = "",
+    landcover: Optional[pd.DataFrame] = None,
 ) -> List[Finding]:
     """
     Key findings for one comparison, headline first and caveats last.
     `codes` is the preset's classification (-1 = masked); `area` is the
-    matching core.change.change_area_summary result.
+    matching core.change.change_area_summary result; `landcover` is an
+    optional core.landcover.landcover_breakdown table.
     """
     if not area.analysed_ha:
         return [Finding(
@@ -168,6 +195,8 @@ def change_findings(
             findings.append(Finding("detail", "The change is spread across the AOI rather than concentrated in one part."))
         elif where:
             findings.append(Finding("detail", f"The change is concentrated in the {where} of the AOI."))
+        if landcover is not None and not landcover.empty:
+            findings.extend(_landcover_findings(landcover))
 
     if area.analysed_pct < LOW_COVERAGE_PCT:
         findings.append(Finding(

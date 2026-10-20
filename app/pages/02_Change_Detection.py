@@ -112,7 +112,7 @@ with st.expander(f"AOI preview — {aoi_label}"):
 # --- Automatic best-pair selection ---
 # As soon as both before/after searches have results, automatically
 # pre-select the pair with the best comparability score (see
-# core.change.select_best_pair) -- seasonally/illumination-matched, with
+# core.change.select_best_pair) -- season-matched, with
 # combined cloud cover only as a tiebreaker -- rather than leaving both
 # tables unselected and requiring a manual cross-reference before the
 # comparison can even run.
@@ -180,7 +180,7 @@ if before_items_all and after_items_all:
                 f"(cloud {current_before.properties.get('eo:cloud_cover', 0):.0f}%) / "
                 f"**After** {current_after.datetime.date()} "
                 f"(cloud {current_after.properties.get('eo:cloud_cover', 0):.0f}%) "
-                "-- ranked by seasonal and sun-angle match. Pick a different "
+                "-- ranked by seasonal match and cloud cover. Pick a different "
                 "row in the tables below to use a different scene instead."
             )
         else:
@@ -197,8 +197,8 @@ if before_items_all and after_items_all:
 
 # --- Scene selection: before/after side by side ---
 # Each picker is passed the scene currently selected on the OTHER side (if
-# any) as compare_item, so its table shows Δ Day-of-Year / Δ Sun Elev
-# relative to that scene -- a seasonal or illumination mismatch is visible
+# any) as compare_item, so its table shows Δ Day-of-Year relative to
+# that scene -- a seasonal mismatch is visible
 # while still choosing, not just as a warning after the fact. On first
 # load, before either side has a selection, compare_item is simply None
 # and the table looks exactly as it did before this feature was added.

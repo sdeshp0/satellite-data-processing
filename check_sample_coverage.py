@@ -11,7 +11,7 @@ For each entry in SAMPLE_ANALYSES, this script:
      from sample_analyses.py rather than duplicated), so results match
      what clicking "Run this analysis" would actually pick.
   2. Picks the best pair with core.change.select_best_pair -- the same
-     seasonal/sun-elevation-matched selection the app uses.
+     season-matched selection the app uses.
   3. Loads both scenes at a modest preview resolution and computes
      core.change.coverage_overlap: the actual PIXEL-LEVEL before/after
      usable-data overlap, not just each scene's own coverage_fraction.
@@ -19,8 +19,7 @@ For each entry in SAMPLE_ANALYSES, this script:
      Ganges-Brahmaputra Delta flood sample's coverage problem before it
      showed up as a surprise in the app.
   4. Reports comparability_checks() findings alongside the coverage
-     numbers (UTM/tile/platform mismatch, seasonal distance, sun
-     elevation difference).
+     numbers (UTM/tile/platform mismatch, seasonal distance).
   5. Flags any sample whose "usable in both dates" percentage falls below
      a threshold (default 60%) as a likely problem sample.
 
