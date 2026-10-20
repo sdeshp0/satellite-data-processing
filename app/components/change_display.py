@@ -13,7 +13,6 @@ from typing import Any, Tuple
 
 import numpy as np
 import streamlit as st
-import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -276,7 +275,7 @@ def _render_before_after_slider(
 ) -> None:
     """
     Render an interactive swipe/wipe before-after image comparison: a
-    self-contained HTML/CSS/JS snippet via st.components.v1.html, with no
+    self-contained HTML/CSS/JS snippet via st.iframe, with no
     external JS dependency -- unlike, e.g., Nominatim geocoding elsewhere
     in this app, this needs no outbound network access, so it behaves
     identically on Streamlit Community Cloud and locally.
@@ -296,7 +295,7 @@ def _render_before_after_slider(
     array_shape : tuple(int, int)
         (height, width) of the source array, used only to pick a
         reasonable fixed iframe height (see _SLIDER_ASSUMED_WIDTH_PX) --
-        st.components.v1.html doesn't auto-size to its content.
+        the fixed height keeps the page from jumping while the images load.
     key : str
         Unique DOM id for this instance, so more than one slider could
         exist on a page without their JS colliding.
@@ -362,7 +361,7 @@ def _render_before_after_slider(
 }})();
 </script>
 """
-    components.html(html, height=height_px + 4, scrolling=False)
+    st.iframe(html, height=height_px + 4)
 
 
 def change_display(
