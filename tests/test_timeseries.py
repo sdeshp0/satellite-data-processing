@@ -8,6 +8,8 @@ from core.timeseries import (
     add_months,
     pick_scenes,
     recovery_findings,
+    recovery_map,
+    recovery_map_findings,
     recovery_summary,
     sample_point,
 )
@@ -84,3 +86,39 @@ def test_recovery_summary_needs_clear_scenes_on_both_sides():
     summary = recovery_summary(_points([(date(2019, 1, 1), 0.0), (date(2019, 2, 1), -0.3)]), date(2019, 1, 1), date(2019, 2, 1))
     assert summary.latest is None
     assert "can't be measured" in recovery_findings(summary, RECOVERY_PRESETS["logging"], "ndvi")[1].text
+
+
+def test_recovery_map_classes_each_pixel_against_unchanged_land():
+    affected = np.array([[True, True, True, True, False]])
+    before, after = date(2018, 10, 1), date(2018, 11, 20)
+    pre = np.array([[0.6, 0.6, 0.6, 0.6, 0.6]])
+    event = np.array([[0.2, 0.2, 0.2, 0.58, 0.6]])
+    # Everything (unchanged land too) brightens by 0.1 in the latest scenes:
+    # that shift is cancelled by measuring against unchanged land.
+    late = np.array([[0.3, 0.5, 0.7, 0.68, 0.7]])
+    scenes = [
+        (date(2018, 7, 1), pre, 0.6), (before, pre, 0.6), (after, event, 0.6),
+        (date(2020, 6, 1), late, 0.7), (date(2020, 9, 1), late, 0.7),
+        (date(2020, 12, 1), np.full((1, 5), np.nan), None),  # too cloudy: ignored
+    ]
+    codes = recovery_map(scenes, affected, before, after)
+    # Pixel 0 closed 0% of its gap, pixel 1 50%, pixel 2 100%; pixel 3 barely dropped.
+    assert codes.tolist() == [[0, 1, 2, 3, -1]]
+
+
+def test_recovery_map_needs_scenes_after_the_event():
+    affected = np.ones((1, 2), dtype=bool)
+    scenes = [(date(2018, 1, 1), np.zeros((1, 2)), 0.0), (date(2018, 3, 1), np.zeros((1, 2)), 0.0)]
+    assert (recovery_map(scenes, affected, date(2018, 1, 1), date(2018, 3, 1)) == -1).all()
+
+
+def test_recovery_map_findings_shares_and_where_it_lags():
+    codes = np.full((30, 30), -1)
+    codes[:10, 20:] = 0     # lagging in the north-east
+    codes[10:20, :] = 1
+    codes[20:, :] = 2
+    text = recovery_map_findings(codes, 1.0, RECOVERY_PRESETS["wildfire"])[0].text
+    assert text == (
+        "Pixel by pixel, 43% of the burned area with a clear view has recovered, 43% is recovering and "
+        "14% shows little or no recovery, concentrated in the north-east (100 ha)."
+    )
