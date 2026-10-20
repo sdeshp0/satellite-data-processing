@@ -157,6 +157,26 @@ def main() -> int:
     vegetation = rd.flooded_vegetation(grids["before"], grids["after"], landcover)
     flagged = rd.with_flooded_vegetation(codes, vegetation) == rd.FLOODED_VEGETATION
     print(f"  likely flooded vegetation: {format_area(flagged.sum() * px_ha)}")
+
+    # Real flooding under a canopy forms large connected patches along
+    # rivers; speckle and patchy moisture changes are scattered and small.
+    from scipy.ndimage import label
+
+    labelled, n = label(flagged)
+    sizes_ha = np.bincount(labelled.ravel())[1:] * px_ha
+    print(f"  in {n:,} patch(es); area in patches of at least:")
+    for min_ha in (1, 10, 100):
+        print(f"    {min_ha:>4} ha: {format_area(sizes_ha[sizes_ha >= min_ha].sum())}")
+
+    # A scene-wide brightening (rain-wet ground, leaves) shifts every
+    # vegetated pixel; this shows the flagged area once that shift is removed.
+    in_veg = np.isin(landcover, rd.VEGETATION_CLASSES) & np.isfinite(rise)
+    shift = float(np.median(rise[in_veg])) if in_veg.any() else 0.0
+    print(f"  median VV change over all vegetation: {shift:+.1f} dB; with it removed:")
+    for cut in (3.0, 4.0, 5.0):
+        mask = rd.flooded_vegetation(grids["before"] + shift, grids["after"], landcover, brightening_db=cut)
+        mask &= codes == 0
+        print(f"    {cut:g} dB: {format_area(mask.sum() * px_ha)}")
     return 0
 
 
