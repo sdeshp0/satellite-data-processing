@@ -22,7 +22,7 @@ from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 from skimage import measure
 
-from app.components.scene_loader import load_scene_cached
+from app.components.scene_loader import load_scene_cached, load_worldcover_cached
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
@@ -30,6 +30,7 @@ from core.viz import crosshatch, label_points, to_rgb
 from core.hotspots import find_hotspots, hotspot_table, hotspots_geojson
 from core.findings import change_findings, findings_markdown
 from core.confidence import assess_confidence, change_area_range
+from core.landcover import landcover_breakdown
 from core.change import (
     EVENT_PRESETS,
     align_bands,
@@ -537,8 +538,22 @@ def change_display(
             "changed area above is a lower bound."
         )
 
+    # --- Land cover under the change (ESA WorldCover) ---
+    landcover_df, landcover_year, landcover_error = None, 0, None
+    if area.changed_ha:
+        reference = bands_before["nir"]
+        grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
+        try:
+            with st.spinner("Loading land cover..."):
+                landcover, landcover_year = load_worldcover_cached(reference, grid_key)
+            if landcover is not None:
+                landcover_df = landcover_breakdown(landcover, changed, codes >= 0, px_ha)
+        except Exception as exc:  # network/data problems shouldn't break the page
+            landcover_error = type(exc).__name__
+
     findings = findings_markdown(change_findings(
-        preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name
+        preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name,
+        landcover=landcover_df,
     ))
     with findings_slot.container(border=True):
         st.markdown("**Key findings**")
@@ -574,6 +589,23 @@ def change_display(
             "No concentrated area of change: detected change is scattered "
             "across the AOI rather than grouped in one place."
         )
+
+    st.markdown("**What the change affected**")
+    if landcover_df is not None and not landcover_df.empty:
+        st.dataframe(landcover_df, hide_index=True, width="stretch")
+        st.caption(
+            f"Land cover from ESA WorldCover {landcover_year} (10 m). \"Share of this "
+            "land cover changed\" is the changed fraction of that class's analysed area."
+        )
+    elif landcover_error:
+        st.caption(
+            f"Land-cover data couldn't be loaded from Planetary Computer "
+            f"({landcover_error}), so this breakdown is skipped."
+        )
+    elif area.changed_ha:
+        st.caption("No ESA WorldCover land-cover data covers this AOI.")
+    else:
+        st.caption("No change detected to break down by land cover.")
 
     # --- Delta + classification maps ---
     map_col1, map_col2 = st.columns(2)

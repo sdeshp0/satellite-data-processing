@@ -53,3 +53,19 @@ def load_scene_cached(
         max_companion_tiles=max_companion_tiles,
         mosaic_coverage_threshold=mosaic_coverage_threshold,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def load_worldcover_cached(_reference: Any, grid_key: str) -> Tuple[Any, int]:
+    """
+    ESA WorldCover resampled onto the reference band's grid, plus the
+    product year (0 if no tiles were found). `grid_key` (CRS, transform and
+    shape as a string) is the cache key, since the DataArray itself isn't
+    hashed.
+    """
+    from core.landcover import search_worldcover, worldcover_on_grid
+
+    items = search_worldcover(_reference)
+    if not items:
+        return None, 0
+    return worldcover_on_grid(items, _reference), items[0].datetime.year
