@@ -86,3 +86,27 @@ def load_buildings_cached(_reference: Any, grid_key: str) -> Tuple[Any, Any, int
         return None, None, 0
     rows, cols = building_pixels(items, _reference)
     return rows, cols, len(items)
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def load_radar_cached(_reference: Any, grid_key: str, before_date: str, after_date: str) -> Optional[Dict[str, Any]]:
+    """
+    Sentinel-1 VV backscatter (dB) on the reference band's grid for the
+    radar acquisitions closest to the two optical dates (ISO strings, part
+    of the cache key with `grid_key`), plus which scenes were used. None
+    if no radar scene covers either date.
+    """
+    from datetime import date
+
+    from core.radar import backscatter_db, search_radar_pair
+
+    pair = search_radar_pair(_reference, date.fromisoformat(before_date), date.fromisoformat(after_date))
+    if pair is None:
+        return None
+    return {
+        "before_db": backscatter_db(pair.before_items, _reference),
+        "after_db": backscatter_db(pair.after_items, _reference),
+        "before_date": pair.before.datetime.date().isoformat(),
+        "after_date": pair.after.datetime.date().isoformat(),
+        "same_track": pair.same_track,
+    }
