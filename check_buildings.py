@@ -6,9 +6,9 @@ Step-by-step diagnostic for the Microsoft building-footprint lookup
 Builds a UTM grid over an AOI, then runs each step the app runs and prints
 what comes back, with a full traceback wherever a step fails:
 
-  1. The raw STAC search: every partition's id, processing date and asset.
+  1. The raw STAC search: every item's id, processing date and asset.
   2. search_buildings: which partitions the app would read.
-  3. One partition's parquet columns and first few rows.
+  3. Which quadkey partition folders cover the AOI, and their size.
   4. building_pixels: how many building centres land on the grid.
 
 Usage
@@ -64,15 +64,17 @@ def main() -> int:
     reference = _reference_grid(lat, lon, size_km, args.res)
     print("grid:", reference.rio.crs, reference.shape)
 
+    from rasterio.warp import transform_bounds
+
+    bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
+    print("bbox (lon/lat):", tuple(round(b, 4) for b in bbox))
+
     _step("1. Raw STAC search")
     try:
         import planetary_computer as pc
         from pystac_client import Client
-        from rasterio.warp import transform_bounds
         from shapely.geometry import box, mapping
 
-        bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
-        print("bbox (lon/lat):", tuple(round(b, 4) for b in bbox))
         catalog = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", modifier=pc.sign_inplace)
         items = list(catalog.search(collections=[bd.BUILDINGS_COLLECTION], intersects=mapping(box(*bbox))).items())
         print(f"{len(items)} item(s)")
@@ -91,24 +93,30 @@ def main() -> int:
     _step("2. search_buildings (what the app uses)")
     try:
         found = bd.search_buildings(reference)
-        print(f"{len(found)} partition(s): {[item.id for item in found]}")
+        print(f"{len(found)} item(s): {[item.id for item in found]}")
     except Exception:
         traceback.print_exc()
         return 1
     if not found:
-        print("No partitions, so the app would say there are no mapped buildings.")
+        print("No items, so the app would say there are no mapped buildings.")
         return 1
 
-    _step("3. First partition's contents")
+    _step("3. Quadkey partitions for the AOI")
     try:
-        import pandas as pd
+        import pyarrow.parquet as pq
 
-        asset = found[0].assets["data"]
-        options = asset.extra_fields.get("table:storage_options")
-        start = time.time()
-        df = pd.read_parquet(asset.href, **({"storage_options": options} if options else {}))
-        print(f"read {len(df):,} rows in {time.time() - start:.1f}s; columns: {list(df.columns)}")
-        print(df.head(3).to_string()[:800])
+        keys = bd.quadkeys_for_bbox(bbox)
+        print(f"zoom-{bd.QUADKEY_ZOOM} tiles touching the AOI: {keys}")
+        for item in found:
+            fs, paths = bd.partition_paths(item, keys)
+            print(f"- {item.id}: {len(paths)} partition folder(s) found")
+            if not paths:
+                _, base = bd._filesystem(item)
+                print(f"    first entries under {base}: {fs.ls(base, detail=False)[:5]}")
+            for path in paths:
+                start = time.time()
+                table = pq.read_table(path, filesystem=fs)
+                print(f"    {path.rsplit('/', 1)[-1]}: {table.num_rows:,} rows in {time.time() - start:.1f}s; columns {table.column_names}")
     except Exception:
         traceback.print_exc()
         return 1

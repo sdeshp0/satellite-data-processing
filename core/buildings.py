@@ -11,11 +11,14 @@ varying dates, so recent construction or losses may be missing.
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import planetary_computer as pc
+import pyarrow.parquet as pq
 import shapely
 import xarray as xr
 from pyproj import Transformer
@@ -24,10 +27,22 @@ from rasterio.warp import transform_bounds
 from shapely.geometry import box, mapping
 
 BUILDINGS_COLLECTION = "ms-buildings"
+# Each region's GeoParquet is partitioned into folders by Bing Maps
+# quadkey at this zoom level (tiles ~40-80 km wide at mid-latitudes).
+QUADKEY_ZOOM = 9
+
+
+def _item_date(item: Any) -> str:
+    """Processing date of a footprint item, from its properties or its id (e.g. "United States_2022-07-06")."""
+    date = item.properties.get("msbuildings:processing-date")
+    if date:
+        return str(date)
+    match = re.search(r"\d{4}-\d{2}-\d{2}", item.id)
+    return match.group(0) if match else ""
 
 
 def search_buildings(reference: xr.DataArray) -> List[Any]:
-    """Footprint partitions covering the reference grid, latest processing date only."""
+    """Footprint items covering the reference grid: each region's latest release."""
     from pystac_client import Client
 
     bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
@@ -35,20 +50,75 @@ def search_buildings(reference: xr.DataArray) -> List[Any]:
         "https://planetarycomputer.microsoft.com/api/stac/v1", modifier=pc.sign_inplace
     )
     items = list(catalog.search(collections=[BUILDINGS_COLLECTION], intersects=mapping(box(*bbox))).items())
-    if not items:
-        return []
-    dates = {id(item): str(item.properties.get("msbuildings:processing-date", "")) for item in items}
-    latest = max(dates.values())
-    return [item for item in items if dates[id(item)] == latest]
+    latest: Dict[str, Any] = {}
+    for item in items:
+        region = str(item.properties.get("msbuildings:region", ""))
+        if region not in latest or _item_date(item) > _item_date(latest[region]):
+            latest[region] = item
+    return list(latest.values())
 
 
-def _read_geometries(item: Any) -> np.ndarray:
+def quadkey(lon: float, lat: float, zoom: int = QUADKEY_ZOOM) -> str:
+    """Bing Maps quadkey of the web-mercator tile holding lon/lat."""
+    lat = max(min(lat, 85.05112878), -85.05112878)
+    n = 2 ** zoom
+    x = min(int((lon + 180) / 360 * n), n - 1)
+    y = min(int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n), n - 1)
+    return "".join(str(((x >> i) & 1) + 2 * ((y >> i) & 1)) for i in range(zoom - 1, -1, -1))
+
+
+def quadkeys_for_bbox(bbox: Tuple[float, float, float, float], zoom: int = QUADKEY_ZOOM) -> List[str]:
+    """Quadkeys of every tile touching a lon/lat bounding box."""
+    w, s, e, n = bbox
+    top_left, bottom_right = quadkey(w, n, zoom), quadkey(e, s, zoom)
+
+    def tile_xy(key: str) -> Tuple[int, int]:
+        x = y = 0
+        for digit in key:
+            x, y = 2 * x + (int(digit) & 1), 2 * y + (int(digit) >> 1)
+        return x, y
+
+    x0, y0 = tile_xy(top_left)
+    x1, y1 = tile_xy(bottom_right)
+    keys = []
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            keys.append("".join(str(((x >> i) & 1) + 2 * ((y >> i) & 1)) for i in range(zoom - 1, -1, -1)))
+    return keys
+
+
+def _filesystem(item: Any) -> Tuple[Any, str]:
+    """An fsspec filesystem for the item's data asset and the asset's path on it."""
+    import fsspec
+
+    href = item.assets["data"].href
+    if href.startswith("abfs://"):
+        options = item.assets["data"].extra_fields.get("table:storage_options") or {}
+        return fsspec.filesystem("abfs", **options), href[len("abfs://"):]
+    return fsspec.filesystem("file"), href
+
+
+def partition_paths(item: Any, quadkeys: Sequence[str]) -> Tuple[Any, List[str]]:
+    """
+    The item's quadkey partition folders for the given tiles, so only the
+    AOI's part of a whole-country file is read. Tiles with no buildings have
+    no folder. The folder may name the quadkey with or without leading zeros.
+    """
+    fs, base = _filesystem(item)
+    paths = []
+    for key in quadkeys:
+        for name in dict.fromkeys([key, key.lstrip("0") or "0"]):
+            path = f"{base}/quadkey={name}"
+            if fs.exists(path):
+                paths.append(path)
+                break
+    return fs, paths
+
+
+def _read_geometries(fs: Any, path: str) -> np.ndarray:
     """One partition's footprints as shapely geometries (EPSG:4326)."""
-    asset = item.assets["data"]
-    options = asset.extra_fields.get("table:storage_options")
-    kwargs = {"storage_options": options} if options else {}
-    df = pd.read_parquet(asset.href, columns=["geometry"], **kwargs)
-    return shapely.from_wkb(df["geometry"].to_numpy())
+    table = pq.read_table(path, filesystem=fs, columns=["geometry"])
+    return shapely.from_wkb(table.column("geometry").to_numpy(zero_copy_only=False))
 
 
 def building_pixels(items: Sequence[Any], reference: xr.DataArray) -> Tuple[np.ndarray, np.ndarray]:
@@ -62,17 +132,22 @@ def building_pixels(items: Sequence[Any], reference: xr.DataArray) -> Tuple[np.n
     w, s, e, n = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
 
     rows, cols = [], []
+    keys = quadkeys_for_bbox((w, s, e, n))
     for item in items:
-        geoms = _read_geometries(item)
-        centroids = shapely.centroid(geoms)
-        lon, lat = shapely.get_x(centroids), shapely.get_y(centroids)
-        near = (lon >= w) & (lon <= e) & (lat >= s) & (lat <= n)
-        x, y = to_grid.transform(lon[near], lat[near])
-        row, col = rowcol(transform, x, y)
-        row, col = np.asarray(row, dtype=int), np.asarray(col, dtype=int)
-        inside = (row >= 0) & (row < height) & (col >= 0) & (col < width)
-        rows.append(row[inside])
-        cols.append(col[inside])
+        fs, paths = partition_paths(item, keys)
+        for path in paths:
+            geoms = _read_geometries(fs, path)
+            centroids = shapely.centroid(geoms)
+            lon, lat = shapely.get_x(centroids), shapely.get_y(centroids)
+            near = (lon >= w) & (lon <= e) & (lat >= s) & (lat <= n)
+            if not near.any():
+                continue
+            x, y = to_grid.transform(lon[near], lat[near])
+            row, col = rowcol(transform, x, y)
+            row, col = np.asarray(row, dtype=int), np.asarray(col, dtype=int)
+            inside = (row >= 0) & (row < height) & (col >= 0) & (col < width)
+            rows.append(row[inside])
+            cols.append(col[inside])
     if not rows:
         return np.empty(0, int), np.empty(0, int)
     return np.concatenate(rows), np.concatenate(cols)
