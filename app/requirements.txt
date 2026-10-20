@@ -13,5 +13,6 @@ geopy>=2.4
 requests>=2.31
 pyproj>=3.6
 pandas>=2.0
-scikit-image>=0.19pyarrow>=14
+scikit-image>=0.19
+pyarrow>=14
 adlfs>=2023.1
