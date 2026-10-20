@@ -11,6 +11,8 @@ what comes back, with a full traceback wherever a step fails:
   3. Each date's VV backscatter on the grid: coverage, dB spread, share
      below the water threshold, and read time.
   4. The water-change classes from the two dates.
+  5. Likely flooded vegetation: vegetated land (ESA WorldCover) that
+     brightened sharply, a separate check on top of the water classes.
 
 Usage
 -----
@@ -128,6 +130,33 @@ def main() -> int:
     for code, label in WATER_LABELS.items():
         print(f"  {label:<26} {format_area((codes == code).sum() * px_ha)}")
     print(f"  {'No data':<26} {format_area((codes < 0).sum() * px_ha)}")
+
+    _step("5. Flooded vegetation (brightening)")
+    if not pair.same_track:
+        print("Skipped: the scenes are from different orbit tracks, so the app doesn't check this.")
+        return 0
+    try:
+        from core.landcover import WORLDCOVER_CLASSES, search_worldcover, worldcover_on_grid
+
+        items, year = search_worldcover(reference, before.year)
+        if not items:
+            print("No WorldCover tiles, so the app skips this check.")
+            return 0
+        landcover = worldcover_on_grid(items, reference)
+    except Exception:
+        traceback.print_exc()
+        return 1
+    rise = grids["after"] - grids["before"]
+    print(f"WorldCover {year}; brightening of {rd.BRIGHTENING_DB:g} dB or more counts")
+    for code in rd.VEGETATION_CLASSES:
+        in_class = (landcover == code) & np.isfinite(rise)
+        if in_class.any():
+            p50, p95 = np.percentile(rise[in_class], [50, 95])
+            print(f"  {WORLDCOVER_CLASSES[code][0]:<20} {format_area(in_class.sum() * px_ha):>10}; "
+                  f"VV change median {p50:+.1f} dB, 95th percentile {p95:+.1f} dB")
+    vegetation = rd.flooded_vegetation(grids["before"], grids["after"], landcover)
+    flagged = rd.with_flooded_vegetation(codes, vegetation) == rd.FLOODED_VEGETATION
+    print(f"  likely flooded vegetation: {format_area(flagged.sum() * px_ha)}")
     return 0
 
 
