@@ -25,6 +25,7 @@ dependencies:
   # Streamlit + Folium-based maps
   - streamlit>=1.56
   - leafmap>=0.31
+  - folium>=0.15
 
   # Jupyter (optional but useful)
   - jupyterlab
