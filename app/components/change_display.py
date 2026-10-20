@@ -128,12 +128,12 @@ def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_k
     date_col1, date_col2 = st.columns(2)
     date_col1.date_input(
         "Radar before date", value=dates[0], key=date_keys[0],
-        help="Defaults to the optical before date. The closest radar scene is used.",
+        help="Defaults to the optical before date, or a flood sample's chosen date. The closest radar scene is used.",
     )
     date_col2.date_input(
         "Radar after date", value=dates[1], key=date_keys[1],
         help=(
-            "Defaults to the optical after date. Radar isn't blocked by cloud, so "
+            "Defaults to the optical after date, or a flood sample's peak date. Radar isn't blocked by cloud, so "
             "set this to the flood peak if cloud pushed the optical scene later."
         ),
     )
@@ -665,9 +665,13 @@ def change_display(
     # Keyed by the optical pair so picking a new pair resets them.
     pair_key = f"{before_item.id}_{after_item.id}"
     radar_date_keys = (f"{key_prefix}_radar_before_{pair_key}", f"{key_prefix}_radar_after_{pair_key}")
+    default_dates = (before_item.datetime.date(), after_item.datetime.date())
+    sample_dates = st.session_state.get("sample_radar_dates")
+    if sample_dates and sample_dates["pair"] == pair_key:
+        default_dates = sample_dates["dates"]
     radar_dates = (
-        st.session_state.get(radar_date_keys[0], before_item.datetime.date()),
-        st.session_state.get(radar_date_keys[1], after_item.datetime.date()),
+        st.session_state.get(radar_date_keys[0], default_dates[0]),
+        st.session_state.get(radar_date_keys[1], default_dates[1]),
     )
     if preset_key == "flood":
         try:

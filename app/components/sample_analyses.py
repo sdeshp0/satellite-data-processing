@@ -248,6 +248,8 @@ SAMPLE_ANALYSES: Dict[str, Dict[str, Any]] = {
         "lat": 40.6708, "lon": -95.8608, "width_km": 45, "height_km": 45,
         "before_range": (date(2018, 9, 1), date(2018, 10, 31)),
         "after_range": (date(2019, 3, 15), date(2019, 4, 15)),
+        # Sentinel-1 passes nearest the fall baseline and the 18 March peak.
+        "radar_dates": (date(2018, 10, 1), date(2019, 3, 18)),
         "description": (
             "A mid-March 2019 \"bomb cyclone\" dropped heavy rain onto "
             "already-frozen, snow-covered ground across Nebraska and Iowa, "
@@ -379,6 +381,12 @@ def _run_sample_analysis(key: str) -> None:
     st.session_state["before_stac_item"] = best_before
     st.session_state["after_stac_item"] = best_after
     st.session_state["sample_analysis_error"] = None
+    # Flood samples can open the radar map at the flood peak, which cloud
+    # often keeps the optical scenes away from. Tied to this pair only.
+    st.session_state["sample_radar_dates"] = (
+        {"pair": f"{best_before.id}_{best_after.id}", "dates": sample["radar_dates"]}
+        if "radar_dates" in sample else None
+    )
 
     # Let the user know if either side needed relaxed cloud cover or a
     # widened window -- worth knowing, since a heavily relaxed cloud filter
