@@ -20,6 +20,20 @@ from core.indices import compute_indices
 from core.viz import to_rgb
 from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.stats import summary_table, scl_breakdown, coverage_info
+from core.change import _scl_valid_mask, pixel_area_ha
+from core.findings import findings_markdown
+from core.scene_summary import SURFACE_LABELS, scene_findings, surface_types
+from matplotlib.colors import ListedColormap
+
+# Map colours per surface type (the Feature Identification overlay colours,
+# with two greens for dense and sparse vegetation).
+SURFACE_COLORS = {
+    "water": "#3182bd",
+    "dense_vegetation": "#006d2c",
+    "sparse_vegetation": "#74c476",
+    "built_or_bare": "#a16928",
+    "other": "#d9d9d9",
+}
 
 
 # Colormap and display range chosen per index *category*, so color direction
@@ -289,9 +303,30 @@ def index_display(
             key=f"{key_prefix}_download_rgb",
         )
 
-    # --- SCL  ---
-    # scl_fig = viz_scl(bands)
-    # st.pyplot(scl_fig)
+    # --- Plain-language summary ---
+    all_indices = compute_indices(bands)
+    clear = _scl_valid_mask(raw_scl.values) & np.isfinite(bands["nir"].values)
+    types = surface_types(all_indices, clear)
+    findings = findings_markdown(scene_findings(types, clear, np.ones_like(clear), pixel_area_ha(bands["nir"])))
+    with st.container(border=True):
+        st.markdown("**Summary**")
+        st.markdown("\n".join(part for part in (findings["summary"], findings["caveats"]) if part))
+        st.caption(
+            "Each clear pixel is labelled by the first test it passes: water (NDWI > 0), vegetation "
+            "(NDVI > 0.3, dense above 0.6), then built-up or bare ground (NDBI or BSI > 0). Buildings "
+            "and bare soil look too alike in these indices to tell apart."
+        )
+        with st.expander("Surface type map"):
+            codes = np.full(clear.shape, np.nan)
+            for i, mask in enumerate(types.values()):
+                codes[mask] = i
+            fig, ax = plt.subplots(figsize=(5, 5))
+            im = ax.imshow(codes, cmap=ListedColormap(list(SURFACE_COLORS.values())), vmin=-0.5, vmax=len(types) - 0.5)
+            ax.axis("off")
+            cbar = fig.colorbar(im, ax=ax, shrink=0.7, ticks=range(len(types)))
+            cbar.ax.set_yticklabels(list(SURFACE_LABELS.values()), fontsize=7)
+            _, map_col, _ = st.columns([1, 2, 1])
+            map_col.pyplot(fig)
 
     # --- Scene Statistics ---
     st.subheader("Scene Statistics")
@@ -324,7 +359,6 @@ def index_display(
     # --- Spectral Indices ---
     st.subheader("Spectral Indices")
 
-    all_indices = compute_indices(bands)
     reference_band = bands["nir"]  # georeferencing source for GeoTIFF export
 
     selected = st.multiselect(
