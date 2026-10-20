@@ -22,7 +22,12 @@ from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 from skimage import measure
 
-from app.components.scene_loader import load_buildings_cached, load_scene_cached, load_worldcover_cached
+from app.components.scene_loader import (
+    load_buildings_cached,
+    load_radar_cached,
+    load_scene_cached,
+    load_worldcover_cached,
+)
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
@@ -32,6 +37,13 @@ from core.findings import change_findings, findings_markdown
 from core.confidence import assess_confidence, change_area_range
 from core.buildings import building_counts, exposure_table
 from core.landcover import landcover_breakdown
+from core.radar import (
+    MAX_DAYS_FROM_OPTICAL as MAX_RADAR_DAYS,
+    WATER_THRESHOLD_DB,
+    classify_radar_water,
+    radar_findings,
+    radar_flood_summary,
+)
 from core.change import (
     EVENT_PRESETS,
     align_bands,
@@ -45,6 +57,8 @@ from core.change import (
     COVERAGE_BOTH_CODE,
     COVERAGE_LABELS,
     COVERAGE_COLORS,
+    WATER_COLORS,
+    WATER_LABELS,
 )
 
 
@@ -106,6 +120,74 @@ def _plot_classification(codes: np.ndarray, labels, colors, title: str):
     cbar = fig.colorbar(im, ax=ax, shrink=0.7, ticks=ordered)
     cbar.ax.set_yticklabels([labels[c] for c in ordered], fontsize=7)
     return fig
+
+
+def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_keys, key_prefix: str) -> None:
+    """Sentinel-1 flood map: dates, scenes used, threshold, headline areas and the class map."""
+    st.markdown("**Radar flood map (Sentinel-1)**")
+    date_col1, date_col2 = st.columns(2)
+    date_col1.date_input(
+        "Radar before date", value=dates[0], key=date_keys[0],
+        help="Defaults to the optical before date. The closest radar scene is used.",
+    )
+    date_col2.date_input(
+        "Radar after date", value=dates[1], key=date_keys[1],
+        help=(
+            "Defaults to the optical after date. Radar isn't blocked by cloud, so "
+            "set this to the flood peak if cloud pushed the optical scene later."
+        ),
+    )
+    if error:
+        st.caption(f"Radar data couldn't be loaded from Planetary Computer ({error}), so this map is skipped.")
+        return
+    if radar is None:
+        st.caption(
+            f"No Sentinel-1 radar scene within {MAX_RADAR_DAYS} days of each "
+            "radar date above, so there's no radar map."
+        )
+        return
+
+    track = "same orbit track" if radar["same_track"] else "different orbit tracks"
+    st.caption(
+        f"Radar scenes from {radar['before_date']} and {radar['after_date']} ({track}). "
+        "Radar sees through cloud: calm open water reflects the signal away and "
+        "shows as dark, so water is mapped wherever VV backscatter is below the threshold."
+    )
+    if not radar["same_track"]:
+        st.warning(
+            "The two radar scenes were taken from different orbit tracks, so the "
+            "viewing angle differs and some change may be geometry, not water."
+        )
+    st.slider(
+        "Water threshold (VV backscatter, dB)",
+        min_value=-24.0, max_value=-12.0, value=WATER_THRESHOLD_DB, step=0.5,
+        key=f"{key_prefix}_radar_threshold",
+        help="Lower is stricter. -18 dB is a common starting point; try -20 if land is being mapped as water.",
+    )
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("New water (radar)", format_area(summary.new_water_ha))
+    col2.metric("New water (optical)", format_area(summary.optical_new_water_ha))
+    col3.metric(
+        "Radar-only, under cloud", format_area(summary.blind_new_water_ha),
+        help="Radar new water where the optical images had cloud, shadow or no data.",
+    )
+    if summary.buildings_in_new_water:
+        st.caption(f"{summary.buildings_in_new_water:,} mapped buildings sit in radar-mapped new water.")
+
+    map_col1, map_col2 = st.columns(2)
+    with map_col1:
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.imshow(radar["after_db"], cmap="gray", vmin=-25, vmax=0)
+        ax.set_title(f"After VV backscatter ({radar['after_date']})", fontsize=11)
+        ax.axis("off")
+        st.pyplot(fig)
+    with map_col2:
+        st.pyplot(_plot_classification(radar_codes, WATER_LABELS, WATER_COLORS, "Radar water change"))
+    st.caption(
+        "Flooded vegetation and flooded streets can look bright rather than dark, "
+        "so radar may miss them; steep slopes facing away from the satellite can look like water."
+    )
 
 
 def _index_style_for(name: str) -> Tuple[str, float, float]:
@@ -540,10 +622,10 @@ def change_display(
         )
 
     # --- Land cover under the change (ESA WorldCover) ---
+    reference = bands_before["nir"]
+    grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
     landcover_df, landcover_year, landcover_error = None, 0, None
     if area.changed_ha:
-        reference = bands_before["nir"]
-        grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
         try:
             with st.spinner("Loading land cover..."):
                 landcover, landcover_year = load_worldcover_cached(
@@ -555,8 +637,11 @@ def change_display(
             landcover_error = f"{type(exc).__name__}: {str(exc)[:150]}"
 
     # --- Buildings in the change (Microsoft building footprints) ---
+    # Floods also load them for the radar map, which can find water the
+    # optical images missed under cloud.
     buildings, buildings_error = None, None
-    if area.changed_ha:
+    b_rows = b_cols = None
+    if area.changed_ha or preset_key == "flood":
         try:
             with st.spinner("Loading building footprints..."):
                 b_rows, b_cols, _ = load_buildings_cached(reference, grid_key)
@@ -565,10 +650,38 @@ def change_display(
         except Exception as exc:  # network/data problems shouldn't break the page
             buildings_error = f"{type(exc).__name__}: {str(exc)[:150]}"
 
-    findings = findings_markdown(change_findings(
+    # --- Radar flood map (Sentinel-1), floods only ---
+    radar, radar_error, radar_codes, radar_summary = None, None, None, None
+    radar_threshold = st.session_state.get(f"{key_prefix}_radar_threshold", WATER_THRESHOLD_DB)
+    # The radar dates default to the optical ones but can be moved, e.g. to
+    # the flood peak when cloud forced the optical "after" scene later.
+    # Keyed by the optical pair so picking a new pair resets them.
+    pair_key = f"{before_item.id}_{after_item.id}"
+    radar_date_keys = (f"{key_prefix}_radar_before_{pair_key}", f"{key_prefix}_radar_after_{pair_key}")
+    radar_dates = (
+        st.session_state.get(radar_date_keys[0], before_item.datetime.date()),
+        st.session_state.get(radar_date_keys[1], after_item.datetime.date()),
+    )
+    if preset_key == "flood":
+        try:
+            with st.spinner("Loading Sentinel-1 radar..."):
+                radar = load_radar_cached(
+                    reference, grid_key, radar_dates[0].isoformat(), radar_dates[1].isoformat(),
+                )
+            if radar is not None:
+                radar_codes = classify_radar_water(radar["before_db"], radar["after_db"], radar_threshold)
+                radar_summary = radar_flood_summary(radar_codes, codes, px_ha, b_rows, b_cols)
+        except Exception as exc:  # network/data problems shouldn't break the page
+            radar_error = f"{type(exc).__name__}: {str(exc)[:150]}"
+
+    finding_list = change_findings(
         preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name,
         landcover=landcover_df, building_counts=buildings,
-    ))
+    )
+    if radar_summary is not None:
+        caveats = [f for f in finding_list if f.kind == "caveat"]
+        finding_list = [f for f in finding_list if f.kind != "caveat"] + radar_findings(radar_summary) + caveats
+    findings = findings_markdown(finding_list)
     with findings_slot.container(border=True):
         st.markdown("**Key findings**")
         st.markdown(findings["summary"])
@@ -650,6 +763,9 @@ def change_display(
         st.caption("No mapped buildings in the analysed area.")
     else:
         st.caption("No change detected to count buildings in.")
+
+    if preset_key == "flood":
+        _render_radar_section(radar, radar_codes, radar_summary, radar_error, radar_dates, radar_date_keys, key_prefix)
 
     # --- Delta + classification maps ---
     map_col1, map_col2 = st.columns(2)
