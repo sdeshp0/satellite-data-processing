@@ -36,3 +36,5 @@ dependencies:
       - geopy>=2.4
       - requests>=2.31
       - pyproj>=3.6
+      - pyarrow>=14
+      - adlfs>=2023.1

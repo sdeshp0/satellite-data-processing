@@ -22,7 +22,7 @@ from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 from skimage import measure
 
-from app.components.scene_loader import load_scene_cached, load_worldcover_cached
+from app.components.scene_loader import load_buildings_cached, load_scene_cached, load_worldcover_cached
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
 from core.indices import compute_indices
@@ -30,6 +30,7 @@ from core.viz import crosshatch, label_points, to_rgb
 from core.hotspots import find_hotspots, hotspot_table, hotspots_geojson
 from core.findings import change_findings, findings_markdown
 from core.confidence import assess_confidence, change_area_range
+from core.buildings import building_counts, exposure_table
 from core.landcover import landcover_breakdown
 from core.change import (
     EVENT_PRESETS,
@@ -553,9 +554,20 @@ def change_display(
         except Exception as exc:  # network/data problems shouldn't break the page
             landcover_error = f"{type(exc).__name__}: {str(exc)[:150]}"
 
+    # --- Buildings in the change (Microsoft building footprints) ---
+    buildings, buildings_error = None, None
+    if area.changed_ha:
+        try:
+            with st.spinner("Loading building footprints..."):
+                b_rows, b_cols, _ = load_buildings_cached(reference, grid_key)
+            if b_rows is not None:
+                buildings = building_counts(b_rows, b_cols, codes)
+        except Exception as exc:  # network/data problems shouldn't break the page
+            buildings_error = f"{type(exc).__name__}: {str(exc)[:150]}"
+
     findings = findings_markdown(change_findings(
         preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name,
-        landcover=landcover_df,
+        landcover=landcover_df, building_counts=buildings,
     ))
     with findings_slot.container(border=True):
         st.markdown("**Key findings**")
@@ -615,6 +627,29 @@ def change_display(
         st.caption("No ESA WorldCover land-cover data covers this AOI.")
     else:
         st.caption("No change detected to break down by land cover.")
+
+    st.markdown("**Buildings in the change area**")
+    if buildings:
+        exposure_df = exposure_table(buildings, preset["labels"], preset["baseline_codes"])
+        if exposure_df.empty:
+            st.caption(f"None of the {sum(buildings.values()):,} mapped buildings in the analysed area fall in the change area.")
+        else:
+            st.dataframe(exposure_df, hide_index=True, width="stretch")
+        st.caption(
+            "Footprints from Microsoft's Global ML Building Footprints, mapped "
+            "from imagery of varying dates, so recent construction or losses "
+            "may be missing. A building counts where its centre falls. Being "
+            "in the change area means exposed, not necessarily damaged."
+        )
+    elif buildings_error:
+        st.caption(
+            f"Building footprints couldn't be loaded from Planetary Computer "
+            f"({buildings_error}), so this count is skipped."
+        )
+    elif area.changed_ha:
+        st.caption("No mapped buildings in the analysed area.")
+    else:
+        st.caption("No change detected to count buildings in.")
 
     # --- Delta + classification maps ---
     map_col1, map_col2 = st.columns(2)

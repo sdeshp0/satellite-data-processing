@@ -69,3 +69,20 @@ def load_worldcover_cached(_reference: Any, grid_key: str, as_of: Optional[int] 
     if not items:
         return None, 0
     return worldcover_on_grid(items, _reference), year
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def load_buildings_cached(_reference: Any, grid_key: str) -> Tuple[Any, Any, int]:
+    """
+    Grid (rows, cols) of every Microsoft building footprint's centroid on
+    the reference band's grid, plus the number of footprint partitions
+    found (0 if none cover the AOI). `grid_key` is the cache key, as for
+    load_worldcover_cached.
+    """
+    from core.buildings import building_pixels, search_buildings
+
+    items = search_buildings(_reference)
+    if not items:
+        return None, None, 0
+    rows, cols = building_pixels(items, _reference)
+    return rows, cols, len(items)
