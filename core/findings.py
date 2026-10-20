@@ -32,6 +32,14 @@ LANDCOVER_MIN_SHARE_PCT = 5.0
 # Built-up land in the change area is called out from this many hectares.
 BUILT_UP_MIN_HA = 1.0
 
+# Per preset: the classes whose buildings count as exposed, what to call
+# that area, and optionally a more severe subset worth its own count.
+_EXPOSURE = {
+    "wildfire": ([3, 4, 5, 6], "the burned area", ([5, 6], "moderate-high or high severity")),
+    "flood": ([2], "the newly flooded area", None),
+    "logging": ([2], "the vegetation-loss area", None),
+}
+
 _SECTOR_NAMES = [
     ["north-west", "north", "north-east"],
     ["west", "centre", "east"],
@@ -133,6 +141,26 @@ def _landcover_findings(landcover: pd.DataFrame) -> List[Finding]:
     return out
 
 
+def _buildings_findings(preset_key: str, counts: Dict[int, int], baseline_codes: Sequence[int]) -> List[Finding]:
+    """How many buildings sit in the impacted area, out of those analysed."""
+    analysed = sum(counts.values())
+    if not analysed:
+        return []
+    exposed_codes, area_name, severe = _EXPOSURE.get(
+        preset_key, ([c for c in counts if c not in baseline_codes], "the change area", None)
+    )
+    exposed = sum(counts.get(c, 0) for c in exposed_codes)
+    if not exposed:
+        return [Finding("detail", f"None of the {analysed:,} mapped buildings in the analysed area fall in {area_name}.")]
+    noun = "building sits" if exposed == 1 else "buildings sit"
+    text = f"{exposed:,} mapped {noun} in {area_name}, {100 * exposed / analysed:.0f}% of the {analysed:,} in the analysed area"
+    if severe:
+        n_severe = sum(counts.get(c, 0) for c in severe[0])
+        if n_severe:
+            text += f"; {n_severe:,} of them in {severe[1]}"
+    return [Finding("detail", text + ".")]
+
+
 def change_location(changed: np.ndarray) -> Optional[str]:
     """
     Where changed pixels sit in the AOI, assuming a north-up grid: the name
@@ -162,12 +190,14 @@ def change_findings(
     notes: Sequence[ComparabilityNote] = (),
     index_name: str = "",
     landcover: Optional[pd.DataFrame] = None,
+    building_counts: Optional[Dict[int, int]] = None,
 ) -> List[Finding]:
     """
     Key findings for one comparison, headline first and caveats last.
     `codes` is the preset's classification (-1 = masked); `area` is the
     matching core.change.change_area_summary result; `landcover` is an
-    optional core.landcover.landcover_breakdown table.
+    optional core.landcover.landcover_breakdown table; `building_counts`
+    is an optional core.buildings.building_counts result.
     """
     if not area.analysed_ha:
         return [Finding(
@@ -197,6 +227,8 @@ def change_findings(
             findings.append(Finding("detail", f"The change is concentrated in the {where} of the AOI."))
         if landcover is not None and not landcover.empty:
             findings.extend(_landcover_findings(landcover))
+        if building_counts:
+            findings.extend(_buildings_findings(preset_key, building_counts, baseline_codes))
 
     if area.analysed_pct < LOW_COVERAGE_PCT:
         findings.append(Finding(
