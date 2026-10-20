@@ -92,14 +92,16 @@ def main() -> int:
     if pair is None:
         print("No pair: one of the dates has no radar scene, so the app shows no radar map.")
         return 1
-    print(f"before {pair.before.id}\nafter  {pair.after.id}\nsame track: {pair.same_track}")
+    for label, items in (("before", pair.before_items), ("after", pair.after_items)):
+        print(f"{label}: {[item.id for item in items]}")
+    print(f"same track: {pair.same_track}")
 
     _step("3. VV backscatter on the grid")
     grids = {}
-    for label, item in (("before", pair.before), ("after", pair.after)):
+    for label, items in (("before", pair.before_items), ("after", pair.after_items)):
         try:
             start = time.time()
-            db = rd.backscatter_db(item, reference)
+            db = rd.backscatter_db(items, reference)
         except Exception:
             traceback.print_exc()
             return 1

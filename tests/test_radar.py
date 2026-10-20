@@ -33,6 +33,16 @@ def test_pick_radar_pair_prefers_closest_after_and_matching_track():
     # Aug 18 is closer to the optical date, but Aug 12 is on the same track.
     assert pair.before.datetime.date() == date(2017, 8, 12)
     assert pair.same_track
+    assert len(pair.after_items) == 1 and len(pair.before_items) == 1
+
+
+def test_pick_radar_pair_keeps_every_scene_of_the_pass():
+    after = [_item("2017-08-29T00:26:20", orbit=34), _item("2017-08-29T00:26:45", orbit=34),
+             _item("2017-08-30T12:22:03", orbit=143)]
+    before = [_item("2017-08-05T00:26:19", orbit=34), _item("2017-08-05T00:26:44", orbit=34)]
+    pair = pick_radar_pair(before, after, date(2017, 8, 5), date(2017, 8, 29))
+    assert len(pair.after_items) == 2 and len(pair.before_items) == 2
+    assert all(item.properties["sat:relative_orbit"] == 34 for item in pair.after_items)
 
 
 def test_pick_radar_pair_falls_back_to_any_track():
@@ -56,7 +66,7 @@ def test_backscatter_db_resamples_onto_grid_in_db(tmp_path, monkeypatch):
                        crs="EPSG:32610", transform=from_origin(left, top, 10, 10), nodata=0) as dst:
         dst.write(data, 1)
 
-    db = backscatter_db(_item("2017-08-30", href=str(path)), reference)
+    db = backscatter_db([_item("2017-08-30", href=str(path))], reference)
     assert db.shape == (20, 20)
     assert np.isnan(db[0]).all()
     assert np.allclose(db[5:, :5], -20, atol=0.1)
@@ -88,3 +98,36 @@ def test_radar_findings_wording():
         "85 mapped buildings sit in radar-mapped new water.",
     ]
     assert "no new open water" in radar_findings(RadarFloodSummary(0, 0, 0, None))[0].text
+
+
+def test_backscatter_db_merges_scenes_from_one_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(radar, "SPECKLE_FILTER_PX", 1)
+    reference = make_da(np.zeros((20, 20)), res=20.0)
+    left, top = 500_000.0 - 50, 4_400_000.0 + 50
+    items = []
+    for name, rows in (("north", slice(0, 30)), ("south", slice(30, 60))):
+        data = np.zeros((60, 60), dtype="float32")
+        data[rows] = 0.1
+        path = tmp_path / f"{name}.tif"
+        with rasterio.open(path, "w", driver="GTiff", height=60, width=60, count=1, dtype="float32",
+                           crs="EPSG:32610", transform=from_origin(left, top, 10, 10), nodata=0) as dst:
+            dst.write(data, 1)
+        items.append(_item("2017-08-30", href=str(path)))
+
+    db = backscatter_db(items, reference)
+    assert np.isfinite(db).all()
+    assert np.allclose(db, -10, atol=0.1)
+
+
+def test_backscatter_db_leaves_area_outside_the_scene_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(radar, "SPECKLE_FILTER_PX", 1)
+    reference = make_da(np.zeros((20, 20)), res=20.0)
+    path = tmp_path / "west.tif"
+    # Covers only the reference's western 200 m (10 of its 20 columns).
+    with rasterio.open(path, "w", driver="GTiff", height=40, width=20, count=1, dtype="float32",
+                       crs="EPSG:32610", transform=from_origin(500_000.0, 4_400_000.0, 10, 10), nodata=0) as dst:
+        dst.write(np.full((40, 20), 0.1, dtype="float32"), 1)
+
+    db = backscatter_db([_item("2017-08-30", href=str(path))], reference)
+    assert np.allclose(db[:, :10], -10, atol=0.1)
+    assert np.isnan(db[:, 10:]).all()

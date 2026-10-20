@@ -104,8 +104,8 @@ def load_radar_cached(_reference: Any, grid_key: str, before_date: str, after_da
     if pair is None:
         return None
     return {
-        "before_db": backscatter_db(pair.before, _reference),
-        "after_db": backscatter_db(pair.after, _reference),
+        "before_db": backscatter_db(pair.before_items, _reference),
+        "after_db": backscatter_db(pair.after_items, _reference),
         "before_date": pair.before.datetime.date().isoformat(),
         "after_date": pair.after.datetime.date().isoformat(),
         "same_track": pair.same_track,

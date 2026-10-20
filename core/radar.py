@@ -26,7 +26,8 @@ import rasterio
 import xarray as xr
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, transform_bounds
-from rasterio.windows import from_bounds
+from rasterio.errors import WindowError
+from rasterio.windows import Window, from_bounds
 from scipy.ndimage import median_filter
 from shapely.geometry import box, mapping
 
@@ -45,9 +46,23 @@ SPECKLE_FILTER_PX = 3
 
 @dataclass
 class RadarPair:
-    before: Any
-    after: Any
+    """
+    The radar acquisitions for each date. A satellite pass is cut into
+    consecutive scenes, so an AOI near a cut needs every scene from that
+    pass (same date and track) to be covered.
+    """
+
+    before_items: List[Any]
+    after_items: List[Any]
     same_track: bool
+
+    @property
+    def before(self) -> Any:
+        return self.before_items[0]
+
+    @property
+    def after(self) -> Any:
+        return self.after_items[0]
 
 
 def search_radar(reference: xr.DataArray, start: date, end: date) -> List[Any]:
@@ -87,7 +102,18 @@ def pick_radar_pair(
     after = min(after_items, key=lambda item: _days(item, after_date))
     same = [item for item in before_items if _track(item) == _track(after)]
     before = min(same or before_items, key=lambda item: _days(item, before_date))
-    return RadarPair(before, after, bool(same))
+    return RadarPair(_same_pass(before, before_items), _same_pass(after, after_items), bool(same))
+
+
+def _same_pass(chosen: Any, items: Sequence[Any]) -> List[Any]:
+    """Every scene from the chosen scene's pass: same date and orbit track, chosen first."""
+    rest = [
+        item for item in items
+        if item is not chosen
+        and _track(item) == _track(chosen)
+        and item.datetime.date() == chosen.datetime.date()
+    ]
+    return [chosen] + rest
 
 
 def search_radar_pair(reference: xr.DataArray, before_date: date, after_date: date) -> Optional[RadarPair]:
@@ -102,25 +128,45 @@ def _signed(href: str) -> str:
     return pc.sign(href.split("?", 1)[0]) if href.startswith("http") else href
 
 
-def backscatter_db(item: Any, reference: xr.DataArray, asset: str = "vv") -> np.ndarray:
+def backscatter_db(items: Sequence[Any], reference: xr.DataArray, asset: str = "vv") -> np.ndarray:
     """
-    The item's backscatter on the reference grid, in dB, speckle-filtered.
-    Averaged down to the grid's resolution; NaN where the scene has no data.
+    The backscatter of one pass's scenes on the reference grid, in dB,
+    speckle-filtered. Averaged down to the grid's resolution; where scenes
+    overlap the first with data wins; NaN where none has data.
     """
+    power = np.full(reference.shape[-2:], np.nan, dtype="float32")
+    for item in items:
+        tile = _power_on_grid(item, reference, asset)
+        fill = np.isnan(power) & np.isfinite(tile)
+        power[fill] = tile[fill]
+    db = 10 * np.log10(power)
+    if SPECKLE_FILTER_PX > 1:
+        valid = np.isfinite(db)
+        filled = median_filter(np.where(valid, db, 0.0), size=SPECKLE_FILTER_PX)
+        db = np.where(valid, filled, np.nan).astype("float32")
+    return db
+
+
+def _power_on_grid(item: Any, reference: xr.DataArray, asset: str) -> np.ndarray:
+    """One scene's backscatter (linear power) on the reference grid; NaN where it has no data."""
     dst_crs = reference.rio.crs
     dst_transform = reference.rio.transform()
     height, width = reference.shape[-2:]
 
+    power = np.full((height, width), np.nan, dtype="float32")
     with rasterio.open(_signed(item.assets[asset].href)) as src:
         left, bottom, right, top = transform_bounds(dst_crs, src.crs, *reference.rio.bounds())
         window = from_bounds(left, bottom, right, top, src.transform).round_offsets().round_lengths()
+        # Read only the part inside the scene: GDAL's boundless (VRT) reads
+        # average no-data into edge pixels, darkening them like water.
+        try:
+            window = window.intersection(Window(0, 0, src.width, src.height))
+        except WindowError:  # the AOI misses this scene
+            return power
         # Decimate on read when the grid is coarser than the source.
         scale = max(1.0, min(window.height / height, window.width / width))
         out_shape = (max(1, int(window.height / scale)), max(1, int(window.width / scale)))
-        data = src.read(
-            1, window=window, out_shape=out_shape, boundless=True,
-            fill_value=np.nan, resampling=Resampling.average,
-        ).astype("float32")
+        data = src.read(1, window=window, out_shape=out_shape, resampling=Resampling.average).astype("float32")
         read_transform = src.window_transform(window) * rasterio.Affine.scale(
             window.width / out_shape[1], window.height / out_shape[0]
         )
@@ -130,19 +176,13 @@ def backscatter_db(item: Any, reference: xr.DataArray, asset: str = "vv") -> np.
         data[data == nodata] = np.nan
     data[data <= 0] = np.nan  # linear power; zero means no data
 
-    power = np.full((height, width), np.nan, dtype="float32")
     reproject(
         source=data, destination=power,
         src_transform=read_transform, src_crs=src.crs, src_nodata=np.nan,
         dst_transform=dst_transform, dst_crs=dst_crs, dst_nodata=np.nan,
         resampling=Resampling.average,
     )
-    db = 10 * np.log10(power)
-    if SPECKLE_FILTER_PX > 1:
-        valid = np.isfinite(db)
-        filled = median_filter(np.where(valid, db, 0.0), size=SPECKLE_FILTER_PX)
-        db = np.where(valid, filled, np.nan).astype("float32")
-    return db
+    return power
 
 
 def classify_radar_water(
