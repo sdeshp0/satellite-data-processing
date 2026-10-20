@@ -643,15 +643,18 @@ _DNBR_BINS = [
 ]
 
 
-def classify_dnbr(nbr_before: np.ndarray, nbr_after: np.ndarray) -> np.ndarray:
+def classify_dnbr(
+    nbr_before: np.ndarray, nbr_after: np.ndarray, offset: float = 0.0
+) -> np.ndarray:
     """
     Classify burn severity using dNBR = NBR_before - NBR_after, per the
-    USGS / Key & Benson (2006) FIREMON thresholds.
+    USGS / Key & Benson (2006) FIREMON thresholds, optionally shifted by
+    `offset` (used for sensitivity analysis).
     """
     dnbr = nbr_before - nbr_after
     codes = np.full(dnbr.shape, -1, dtype=int)
     for lo, hi, code in _DNBR_BINS:
-        codes[(dnbr > lo) & (dnbr <= hi)] = code
+        codes[(dnbr > lo + offset) & (dnbr <= hi + offset)] = code
     return codes
 
 
@@ -768,6 +771,8 @@ def classify_statistical(
 # "index": None means the user picks any of the 8 indices in the UI.
 # "baseline_codes": class codes counted as "no meaningful change" when
 # computing the overall % of AOI flagged as changed.
+# "sensitivity": (keyword, values) passed to "classify" to re-run it at
+# nearby thresholds; see core.confidence.change_area_range.
 
 EVENT_PRESETS: Dict[str, Dict] = {
     "wildfire": {
@@ -779,6 +784,7 @@ EVENT_PRESETS: Dict[str, Dict] = {
             "Key & Benson (2006) burn-severity thresholds."
         ),
         "classify": classify_dnbr,
+        "sensitivity": ("offset", [-0.05, 0.05]),
         "labels": DNBR_LABELS,
         "colors": DNBR_COLORS,
         "baseline_codes": [2],
@@ -792,6 +798,7 @@ EVENT_PRESETS: Dict[str, Dict] = {
             "then differenced to find new/lost water."
         ),
         "classify": classify_water_change,
+        "sensitivity": ("threshold", [-0.05, 0.05]),
         "labels": WATER_LABELS,
         "colors": WATER_COLORS,
         "baseline_codes": [0, 1],
@@ -805,6 +812,7 @@ EVENT_PRESETS: Dict[str, Dict] = {
             "differenced to find vegetation loss/gain."
         ),
         "classify": classify_vegetation_loss,
+        "sensitivity": ("threshold", [0.25, 0.35]),
         "labels": VEG_LABELS,
         "colors": VEG_COLORS,
         "baseline_codes": [0, 1],
@@ -818,6 +826,7 @@ EVENT_PRESETS: Dict[str, Dict] = {
             "standard deviations from the AOI's mean delta."
         ),
         "classify": classify_statistical,
+        "sensitivity": ("k", [1.5, 2.5]),
         "labels": STAT_LABELS,
         "colors": STAT_COLORS,
         "baseline_codes": [0],

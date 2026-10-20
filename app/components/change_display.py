@@ -29,6 +29,7 @@ from core.indices import compute_indices
 from core.viz import crosshatch, label_points, to_rgb
 from core.hotspots import find_hotspots, hotspot_table, hotspots_geojson
 from core.findings import change_findings, findings_markdown
+from core.confidence import assess_confidence, change_area_range
 from core.change import (
     EVENT_PRESETS,
     align_bands,
@@ -498,6 +499,8 @@ def change_display(
     px_ha = pixel_area_ha(bands_before["nir"])
     breakdown_df = class_breakdown(codes, preset["labels"], px_ha)
     area = change_area_summary(codes, preset["baseline_codes"], px_ha)
+    area_range = change_area_range(preset, index_before, index_after, area, px_ha)
+    confidence = assess_confidence(area, area_range, notes)
     mean_delta = float(np.nanmean(delta)) if area.analysed_ha else float("nan")
 
     stat_col1, stat_col2, stat_col3 = st.columns(3)
@@ -505,9 +508,18 @@ def change_display(
         st.metric(
             "Area with detected change",
             format_area(area.changed_ha),
-            help="Analysed pixels outside the method's no-change classes.",
+            help=(
+                "Analysed pixels outside the method's no-change classes. The "
+                "likely range re-runs the classification at nearby thresholds."
+            ),
         )
-        st.caption(f"{area.changed_pct}% of the analysed area")
+        caption = f"{area.changed_pct}% of the analysed area"
+        if area_range.high_ha > area_range.low_ha:
+            caption += (
+                f"; likely {format_area(area_range.low_ha)} to "
+                f"{format_area(area_range.high_ha)}"
+            )
+        st.caption(caption)
     with stat_col2:
         st.metric(
             "Area analysed",
@@ -531,6 +543,8 @@ def change_display(
     with findings_slot.container(border=True):
         st.markdown("**Key findings**")
         st.markdown(findings["summary"])
+        reasons = "; ".join(confidence.reasons)
+        st.markdown(f"**Confidence: {confidence.rating}.** {reasons[:1].upper()}{reasons[1:]}.")
         if findings["caveats"]:
             st.markdown("**Caveats**")
             st.markdown(findings["caveats"])
