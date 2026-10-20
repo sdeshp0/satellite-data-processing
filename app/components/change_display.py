@@ -153,6 +153,13 @@ def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_k
         "Radar sees through cloud: calm open water reflects the signal away and "
         "shows as dark, so water is mapped wherever VV backscatter is below the threshold."
     )
+    radar_coverage = 100 * float((radar_codes >= 0).mean())
+    if radar_coverage < 90:
+        st.warning(
+            f"The radar pass covers only {radar_coverage:.0f}% of the AOI (the AOI runs past "
+            "the edge of the satellite's swath). Moving a radar date by a few days can pick "
+            "a pass from a different track that covers more."
+        )
     if not radar["same_track"]:
         st.warning(
             "The two radar scenes were taken from different orbit tracks, so the "
