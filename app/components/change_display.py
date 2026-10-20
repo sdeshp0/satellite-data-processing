@@ -545,6 +545,17 @@ def change_display(
     changed = (codes >= 0) & ~np.isin(codes, preset["baseline_codes"])
     hotspots = find_hotspots(changed)
 
+    # Handed to the Change & Recovery page, which tracks these classes over time.
+    st.session_state["change_result"] = {
+        "preset_key": preset_key,
+        "index_name": index_name,
+        "codes": codes,
+        "reference": bands_before["nir"],
+        "before_item": before_item,
+        "after_item": after_item,
+        "aoi_wkt": aoi.wkt,
+    }
+
     # --- RGB previews, side by side ---
     rgb_before = to_rgb(bands_before)
     rgb_after = to_rgb(bands_after)

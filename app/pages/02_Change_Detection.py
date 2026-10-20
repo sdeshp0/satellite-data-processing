@@ -241,5 +241,7 @@ after_item = st.session_state.get("after_stac_item")
 # --- Comparison ---
 if before_item is not None and after_item is not None:
     change_display(before_item, after_item, aoi, preset_key, key_prefix="change")
+    if preset_key != "custom":
+        st.page_link("pages/04_Change_Recovery.py", label="Track this area over time on Change & Recovery", icon="📈")
 else:
     st.info("Search for and select a scene on both sides to run the comparison.")
