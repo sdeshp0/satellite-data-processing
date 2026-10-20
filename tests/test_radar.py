@@ -13,6 +13,7 @@ from core.radar import (
     classify_radar_water,
     flooded_vegetation,
     pass_coverage,
+    vegetation_shift,
     pick_radar_pair,
     radar_findings,
     radar_flood_summary,
@@ -180,3 +181,17 @@ def test_flooded_vegetation_only_relabels_dry_pixels_and_is_summarised_separatel
     assert radar_flood_summary(radar_codes, np.zeros((2, 2)), 1.0).flooded_vegetation_ha is None
     texts = [f.text for f in radar_findings(summary)]
     assert "trees, shrubs or wetland" in texts[-1]
+
+
+def test_flooded_vegetation_discounts_scene_wide_brightening():
+    landcover = np.full((10, 10), 10)
+    before = np.full((10, 10), -12.0)
+    after = before + 2.0               # rain brightens everything by 2 dB
+    after[2:6, 2:6] += 2.5             # a flooded patch brightens 4.5 dB in all
+    assert vegetation_shift(before, after, landcover) == 2.0
+    mask = flooded_vegetation(before, after, landcover)
+    assert not mask.any()              # 2.5 dB above the shift is under 3 dB
+    after[2:6, 2:6] += 1.0
+    assert flooded_vegetation(before, after, landcover).sum() == 16
+    # A scene that darkened overall doesn't lower the bar.
+    assert vegetation_shift(before, before - 1.0, landcover) == 0.0

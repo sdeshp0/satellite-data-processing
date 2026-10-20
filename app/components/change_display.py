@@ -45,6 +45,7 @@ from core.radar import (
     classify_radar_water,
     flooded_vegetation,
     radar_findings,
+    vegetation_shift,
     radar_flood_summary,
     with_flooded_vegetation,
 )
@@ -709,16 +710,21 @@ def change_display(
                 # ground from the same angle.
                 check_vegetation = landcover is not None and radar["same_track"]
                 if check_vegetation:
+                    shift = vegetation_shift(radar["before_db"], radar["after_db"], landcover)
                     vegetation = flooded_vegetation(
-                        radar["before_db"], radar["after_db"], landcover, threshold_db=radar_threshold
+                        radar["before_db"], radar["after_db"], landcover,
+                        threshold_db=radar_threshold, shift_db=shift,
                     )
                     radar_codes = with_flooded_vegetation(radar_codes, vegetation)
                     vegetation_note = (
                         "**How flooded vegetation is found:** on top of the dark-water threshold, the "
                         f"after scene is compared with the before scene pixel by pixel. Where ESA WorldCover "
                         f"shows trees, shrubs, wetland or mangroves and VV backscatter rose by {BRIGHTENING_DB:g} dB "
-                        "or more (without falling below the water threshold), the pixel is marked as likely "
-                        "flooded vegetation, and isolated marked pixels are dropped as speckle. This only "
+                        "or more beyond the typical change across all vegetation in the AOI "
+                        f"({shift:+.1f} dB here, e.g. from rain-wet ground; a drop counts as 0) and didn't fall "
+                        "below the water threshold, the pixel is marked as likely flooded vegetation. Isolated "
+                        "marked pixels are dropped as speckle. Under dense, leafy canopy this radar sees only "
+                        "part of the water, so expect scattered patches rather than a full outline. This only "
                         "relabels pixels that were dry on both dates: the open-water classes, the new-water "
                         "areas and the building count are computed exactly as before and don't include it."
                     )

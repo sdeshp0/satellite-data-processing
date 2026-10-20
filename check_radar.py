@@ -154,7 +154,9 @@ def main() -> int:
             p50, p95 = np.percentile(rise[in_class], [50, 95])
             print(f"  {WORLDCOVER_CLASSES[code][0]:<20} {format_area(in_class.sum() * px_ha):>10}; "
                   f"VV change median {p50:+.1f} dB, 95th percentile {p95:+.1f} dB")
-    vegetation = rd.flooded_vegetation(grids["before"], grids["after"], landcover)
+    shift = rd.vegetation_shift(grids["before"], grids["after"], landcover)
+    print(f"  scene-wide shift over all vegetation (discounted): {shift:+.1f} dB")
+    vegetation = rd.flooded_vegetation(grids["before"], grids["after"], landcover, shift_db=shift)
     flagged = rd.with_flooded_vegetation(codes, vegetation) == rd.FLOODED_VEGETATION
     print(f"  likely flooded vegetation: {format_area(flagged.sum() * px_ha)}")
 
@@ -168,15 +170,9 @@ def main() -> int:
     for min_ha in (1, 10, 100):
         print(f"    {min_ha:>4} ha: {format_area(sizes_ha[sizes_ha >= min_ha].sum())}")
 
-    # A scene-wide brightening (rain-wet ground, leaves) shifts every
-    # vegetated pixel; this shows the flagged area once that shift is removed.
-    in_veg = np.isin(landcover, rd.VEGETATION_CLASSES) & np.isfinite(rise)
-    shift = float(np.median(rise[in_veg])) if in_veg.any() else 0.0
-    print(f"  median VV change over all vegetation: {shift:+.1f} dB; with it removed:")
-    for cut in (3.0, 4.0, 5.0):
-        mask = rd.flooded_vegetation(grids["before"] + shift, grids["after"], landcover, brightening_db=cut)
-        mask &= codes == 0
-        print(f"    {cut:g} dB: {format_area(mask.sum() * px_ha)}")
+    for cut in (4.0, 5.0):
+        mask = rd.flooded_vegetation(grids["before"], grids["after"], landcover, brightening_db=cut, shift_db=shift)
+        print(f"  at {cut:g} dB instead: {format_area((mask & (codes == 0)).sum() * px_ha)}")
     return 0
 
 

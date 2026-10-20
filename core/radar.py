@@ -245,21 +245,39 @@ def classify_radar_water(
     return classify_water_change(-db_before, -db_after, threshold=-threshold_db)
 
 
+def vegetation_shift(db_before: np.ndarray, db_after: np.ndarray, landcover: np.ndarray) -> float:
+    """
+    The typical brightening of all vegetation between the dates (median VV
+    change in dB, never below 0). Rain-wet ground and leaves brighten a
+    whole scene a little; flooding brightens only part of it, so the median
+    stays close to the scene-wide effect as long as most vegetation is dry.
+    """
+    rise = db_after - db_before
+    in_vegetation = np.isin(landcover, VEGETATION_CLASSES) & np.isfinite(rise)
+    if not in_vegetation.any():
+        return 0.0
+    return max(0.0, float(np.median(rise[in_vegetation])))
+
+
 def flooded_vegetation(
     db_before: np.ndarray,
     db_after: np.ndarray,
     landcover: np.ndarray,
     brightening_db: float = BRIGHTENING_DB,
     threshold_db: float = WATER_THRESHOLD_DB,
+    shift_db: Optional[float] = None,
 ) -> np.ndarray:
     """
     Likely flooded vegetation: vegetated pixels whose backscatter rose by at
-    least `brightening_db` and that aren't open water after. Pixels with
-    fewer than two flagged neighbours are dropped: those are mostly
+    least `brightening_db` more than the scene-wide shift (`shift_db`,
+    vegetation_shift by default) and that aren't open water after. Pixels
+    with fewer than two flagged neighbours are dropped: those are mostly
     leftover speckle.
     """
+    if shift_db is None:
+        shift_db = vegetation_shift(db_before, db_after, landcover)
     mask = (
-        (db_after - db_before >= brightening_db)
+        (db_after - db_before - shift_db >= brightening_db)
         & (db_after >= threshold_db)
         & np.isin(landcover, VEGETATION_CLASSES)
     )
