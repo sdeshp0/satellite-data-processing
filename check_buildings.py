@@ -16,7 +16,7 @@ Usage
 Run from the repository root:
 
     python check_buildings.py                          # Camp Fire sample AOI
-    python check_buildings.py --sample harvey_houston_2017
+    python check_buildings.py --sample sindh_flood_2022
     python check_buildings.py --lat 39.76 --lon -121.62 --size-km 25
 
 Needs real network access to Microsoft Planetary Computer.

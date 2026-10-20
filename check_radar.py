@@ -16,8 +16,8 @@ Usage
 -----
 Run from the repository root:
 
-    python check_radar.py                                    # Harvey, flood peak
-    python check_radar.py --before 2017-08-05 --after 2017-08-30
+    python check_radar.py                                    # Sindh 2022, flood peak
+    python check_radar.py --before 2022-06-19 --after 2022-09-11
     python check_radar.py --sample missouri_river_flood_2019 --before 2018-10-01 --after 2019-03-22
     python check_radar.py --lat 29.80 --lon -95.65 --size-km 20      # Addicks/Barker reservoirs
 
@@ -44,9 +44,9 @@ from check_worldcover import _reference_grid, _step  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sample", default="harvey_houston_2017", help="sample analysis key (default harvey_houston_2017)")
-    parser.add_argument("--before", type=date.fromisoformat, help="before date (default 2017-08-05)")
-    parser.add_argument("--after", type=date.fromisoformat, help="after date (default 2017-08-30)")
+    parser.add_argument("--sample", default="sindh_flood_2022", help="sample analysis key (default sindh_flood_2022)")
+    parser.add_argument("--before", type=date.fromisoformat, help="before date (default: the sample's radar date)")
+    parser.add_argument("--after", type=date.fromisoformat, help="after date (default: the sample's radar date)")
     parser.add_argument("--lat", type=float, help="AOI centre latitude (overrides the sample's)")
     parser.add_argument("--lon", type=float, help="AOI centre longitude (overrides the sample's)")
     parser.add_argument("--size-km", type=float)
@@ -59,8 +59,11 @@ def main() -> int:
         print(f"Unknown sample {args.sample!r}. Known: {', '.join(SAMPLE_ANALYSES)}")
         return 2
     sample = SAMPLE_ANALYSES[args.sample]
-    before = args.before or date(2017, 8, 5)
-    after = args.after or date(2017, 8, 30)
+    if (args.before is None or args.after is None) and "radar_dates" not in sample:
+        print(f"{args.sample} has no radar dates; pass --before and --after.")
+        return 2
+    before = args.before or sample["radar_dates"][0]
+    after = args.after or sample["radar_dates"][1]
     lat = args.lat if args.lat is not None else sample["lat"]
     lon = args.lon if args.lon is not None else sample["lon"]
     size_km = args.size_km or max(sample.get("width_km", 10), sample.get("height_km", 10))
@@ -88,12 +91,15 @@ def main() -> int:
                   f"{props.get('sat:orbit_state')} assets {sorted(item.assets)} id {item.id}")
 
     _step("2. Pair the app would pick")
-    pair = rd.pick_radar_pair(found["before"], found["after"], before, after)
+    from rasterio.warp import transform_bounds
+
+    bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
+    pair = rd.pick_radar_pair(found["before"], found["after"], before, after, bbox)
     if pair is None:
         print("No pair: one of the dates has no radar scene, so the app shows no radar map.")
         return 1
     for label, items in (("before", pair.before_items), ("after", pair.after_items)):
-        print(f"{label}: {[item.id for item in items]}")
+        print(f"{label}: {[item.id for item in items]} (footprint covers {100 * rd.pass_coverage(items, bbox):.0f}% of the AOI)")
     print(f"same track: {pair.same_track}")
 
     _step("3. VV backscatter on the grid")

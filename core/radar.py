@@ -29,7 +29,8 @@ from rasterio.warp import reproject, transform_bounds
 from rasterio.errors import WindowError
 from rasterio.windows import Window, from_bounds
 from scipy.ndimage import median_filter
-from shapely.geometry import box, mapping
+from shapely.geometry import box, mapping, shape
+from shapely.ops import unary_union
 
 from core.change import classify_water_change, format_area
 from core.findings import Finding
@@ -89,19 +90,51 @@ def _days(item: Any, target: date) -> int:
     return abs((item.datetime.date() - target).days)
 
 
+def pass_coverage(items: Sequence[Any], aoi_bbox: Optional[Tuple[float, float, float, float]]) -> float:
+    """
+    Share of a lon/lat AOI box inside the scenes' footprints (1.0 when the
+    box or the footprints are unknown). Uses the STAC geometries, so no
+    pixels are read.
+    """
+    geoms = [shape(item.geometry) for item in items if getattr(item, "geometry", None)]
+    if aoi_bbox is None or not geoms:
+        return 1.0
+    aoi = box(*aoi_bbox)
+    return unary_union(geoms).intersection(aoi).area / aoi.area
+
+
+def _best_pass(
+    candidates: Sequence[Any], items: Sequence[Any], target: date, aoi_bbox: Optional[Tuple[float, float, float, float]]
+) -> Any:
+    """
+    The candidate whose whole pass covers the most of the AOI (to the
+    nearest 10%), then the one closest to the target date.
+    """
+    def score(item: Any) -> Tuple[float, int]:
+        return (-round(pass_coverage(_same_pass(item, items), aoi_bbox), 1), _days(item, target))
+
+    return min(candidates, key=score)
+
+
 def pick_radar_pair(
-    before_items: Sequence[Any], after_items: Sequence[Any], before_date: date, after_date: date
+    before_items: Sequence[Any],
+    after_items: Sequence[Any],
+    before_date: date,
+    after_date: date,
+    aoi_bbox: Optional[Tuple[float, float, float, float]] = None,
 ) -> Optional[RadarPair]:
     """
-    The radar acquisitions closest to each optical date, preferring a
-    before scene on the same orbit track as the after scene, so both dates
-    see the ground from the same angle. None if either side has no scene.
+    The radar passes for each date: on the after side the pass covering the
+    most of the AOI, then the closest to the date; on the before side the
+    same, among passes on the after pass's orbit track when there are any,
+    so both dates see the ground from the same angle. None if either side
+    has no scene.
     """
     if not before_items or not after_items:
         return None
-    after = min(after_items, key=lambda item: _days(item, after_date))
+    after = _best_pass(after_items, after_items, after_date, aoi_bbox)
     same = [item for item in before_items if _track(item) == _track(after)]
-    before = min(same or before_items, key=lambda item: _days(item, before_date))
+    before = _best_pass(same or before_items, before_items, before_date, aoi_bbox)
     return RadarPair(_same_pass(before, before_items), _same_pass(after, after_items), bool(same))
 
 
@@ -121,7 +154,8 @@ def search_radar_pair(reference: xr.DataArray, before_date: date, after_date: da
     window = timedelta(days=MAX_DAYS_FROM_OPTICAL)
     before_items = search_radar(reference, before_date - window, before_date + window)
     after_items = search_radar(reference, after_date - window, after_date + window)
-    return pick_radar_pair(before_items, after_items, before_date, after_date)
+    bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
+    return pick_radar_pair(before_items, after_items, before_date, after_date, bbox)
 
 
 def _signed(href: str) -> str:
