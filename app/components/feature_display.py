@@ -1,6 +1,7 @@
 """
 Feature identification display: threshold selected indices into cleaned
-masks, extract contours, and overlay them on the scene's RGB image.
+masks and crosshatch them on the scene's RGB image; the masks' outlines
+are offered as a GeoJSON download.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from core.change import pixel_area_ha
 from core.landcover import WORLDCOVER_CLASSES, landcover_composition, landcover_rgb
 from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.indices import compute_indices
-from core.viz import to_rgb
+from core.viz import crosshatch, to_rgb
 from core.features import (
     FEATURE_TYPES,
     threshold_mask,
@@ -29,6 +30,10 @@ from core.features import (
     contours_to_geojson,
     region_stats,
 )
+
+
+def _hex_to_rgb(color: str) -> tuple:
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
 
 
 def _mask_to_geotiff_bytes(mask: np.ndarray, reference) -> bytes:
@@ -54,8 +59,8 @@ def feature_display(
     preview_max_dim: int = 1024,
 ) -> None:
     """
-    Threshold spectral indices into cleaned feature masks, overlay their
-    outlines on the scene's RGB image, and offer stats + downloads.
+    Threshold spectral indices into cleaned feature masks, crosshatch them
+    on the scene's RGB image, and offer stats + downloads.
 
     Parameters
     ----------
@@ -70,8 +75,8 @@ def feature_display(
     """
     st.subheader("Feature Identification")
     st.caption(
-        "Thresholds a spectral index into a cleaned mask and traces its "
-        "boundary on the RGB image. Works well for water bodies, urban "
+        "Thresholds a spectral index into a cleaned mask and crosshatches "
+        "it on the RGB image, one colour per feature type. Works well for water bodies, urban "
         "extent, and vegetation/bare-soil boundaries -- all several pixels "
         "wide at Sentinel-2's 10m resolution. Roads and individual "
         "buildings are sub-pixel and can't be reliably extracted this way "
@@ -165,18 +170,18 @@ def feature_display(
             "Area (km\u00b2)": round(stats["area_km2"], 2),
         })
 
-    # --- RGB + contour overlay ---
+    # --- RGB + crosshatch overlay, one colour per feature type ---
+    # Same hatching as Change Detection's hotspots: the image stays
+    # visible between the lines, unlike filled or outlined regions.
     rgb = to_rgb(bands)
-    fig, ax = plt.subplots(figsize=(7, 7))
-    ax.imshow(rgb)
-    ax.axis("off")
-
     handles = []
     for key in selected_features:
         info = FEATURE_TYPES[key]
-        for contour in contours_by_feature[key]:
-            ax.plot(contour[:, 1], contour[:, 0], color=info["color"], linewidth=1.2)
-        handles.append(Patch(color=info["color"], label=info["label"]))
+        rgb = crosshatch(rgb, masks[key], color=_hex_to_rgb(info["color"]), alpha=0.9)
+        handles.append(Patch(facecolor="none", edgecolor=info["color"], hatch="xx", label=info["label"]))
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.imshow(rgb)
+    ax.axis("off")
 
     ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
     st.pyplot(fig)
