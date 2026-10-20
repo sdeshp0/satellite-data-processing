@@ -4,12 +4,14 @@ from types import SimpleNamespace
 import numpy as np
 import rasterio
 from rasterio.transform import from_origin
+from shapely.geometry import box, mapping
 
 from core import radar
 from core.radar import (
     RadarFloodSummary,
     backscatter_db,
     classify_radar_water,
+    pass_coverage,
     pick_radar_pair,
     radar_findings,
     radar_flood_summary,
@@ -17,8 +19,9 @@ from core.radar import (
 from tests.conftest import make_da
 
 
-def _item(when, orbit=64, state="descending", href=None):
+def _item(when, orbit=64, state="descending", href=None, footprint=None):
     return SimpleNamespace(
+        geometry=mapping(box(*footprint)) if footprint else None,
         datetime=datetime.fromisoformat(when),
         properties={"sat:relative_orbit": orbit, "sat:orbit_state": state},
         assets={"vv": SimpleNamespace(href=href)},
@@ -131,3 +134,16 @@ def test_backscatter_db_leaves_area_outside_the_scene_empty(tmp_path, monkeypatc
     db = backscatter_db([_item("2017-08-30", href=str(path))], reference)
     assert np.allclose(db[:, :10], -10, atol=0.1)
     assert np.isnan(db[:, 10:]).all()
+
+
+def test_pick_radar_pair_prefers_the_pass_covering_the_aoi():
+    aoi = (67.5, 26.4, 68.0, 26.8)
+    corner = (67.9, 26.7, 69.0, 28.0)  # clips the AOI's north-east corner
+    full = (67.0, 26.0, 68.5, 27.5)
+    after = [_item("2022-09-03", orbit=144, footprint=corner), _item("2022-08-30", orbit=78, footprint=full)]
+    before = [_item("2022-06-23", orbit=144, footprint=corner), _item("2022-06-19", orbit=78, footprint=full)]
+    pair = pick_radar_pair(before, after, date(2022, 6, 20), date(2022, 9, 5), aoi)
+    assert pair.after.datetime.date() == date(2022, 8, 30)
+    assert pair.before.datetime.date() == date(2022, 6, 19)
+    assert pass_coverage(pair.after_items, aoi) == 1.0
+    assert round(pass_coverage([after[0]], aoi), 2) == 0.05
