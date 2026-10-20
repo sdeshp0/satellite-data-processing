@@ -9,9 +9,17 @@ the sensor, so it shows as very low VV backscatter; a threshold on VV in dB
 on each date, and the two dates are compared with the same water-change
 classes as the optical flood preset.
 
-Known limits: flooded vegetation and flooded streets can look bright rather
-than dark (double bounce), so they are missed; wind-roughened water can
-look like land; and radar shadow on steep slopes can look like water.
+Water under trees, shrubs or tall marsh plants does the opposite: the
+pulse bounces off the water surface and back off the trunks and stems
+("double bounce"), so flooded vegetation turns brighter. Vegetated pixels
+(from ESA WorldCover) that brighten sharply between the two dates are
+flagged as likely flooded vegetation.
+
+Known limits: flooded streets also brighten but aren't flagged, since
+buildings make urban backscatter too variable; dense, leafy canopy can
+hide the water from C-band radar entirely; heavy rain or new leaves can
+brighten dry vegetation too; wind-roughened water can look like land; and
+radar shadow on steep slopes can look like water.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject, transform_bounds
 from rasterio.errors import WindowError
 from rasterio.windows import Window, from_bounds
-from scipy.ndimage import median_filter
+from scipy.ndimage import convolve, median_filter
 from shapely.geometry import box, mapping, shape
 from shapely.ops import unary_union
 
@@ -43,6 +51,14 @@ WATER_THRESHOLD_DB = -18.0
 MAX_DAYS_FROM_OPTICAL = 6
 # Median filter size (pixels) to suppress speckle before thresholding.
 SPECKLE_FILTER_PX = 3
+# Rise in VV backscatter (dB) between the dates that marks likely water
+# under vegetation. Seasonal leaf and moisture changes are mostly smaller.
+BRIGHTENING_DB = 3.0
+# WorldCover classes with trunks or stems standing above the ground: tree
+# cover, shrubland, herbaceous wetland and mangroves.
+VEGETATION_CLASSES = (10, 20, 90, 95)
+# Code for flooded vegetation added to the radar water-change classes.
+FLOODED_VEGETATION = 4
 
 
 @dataclass
@@ -229,12 +245,58 @@ def classify_radar_water(
     return classify_water_change(-db_before, -db_after, threshold=-threshold_db)
 
 
+def vegetation_shift(db_before: np.ndarray, db_after: np.ndarray, landcover: np.ndarray) -> float:
+    """
+    The typical brightening of all vegetation between the dates (median VV
+    change in dB, never below 0). Rain-wet ground and leaves brighten a
+    whole scene a little; flooding brightens only part of it, so the median
+    stays close to the scene-wide effect as long as most vegetation is dry.
+    """
+    rise = db_after - db_before
+    in_vegetation = np.isin(landcover, VEGETATION_CLASSES) & np.isfinite(rise)
+    if not in_vegetation.any():
+        return 0.0
+    return max(0.0, float(np.median(rise[in_vegetation])))
+
+
+def flooded_vegetation(
+    db_before: np.ndarray,
+    db_after: np.ndarray,
+    landcover: np.ndarray,
+    brightening_db: float = BRIGHTENING_DB,
+    threshold_db: float = WATER_THRESHOLD_DB,
+    shift_db: Optional[float] = None,
+) -> np.ndarray:
+    """
+    Likely flooded vegetation: vegetated pixels whose backscatter rose by at
+    least `brightening_db` more than the scene-wide shift (`shift_db`,
+    vegetation_shift by default) and that aren't open water after. Pixels
+    with fewer than two flagged neighbours are dropped: those are mostly
+    leftover speckle.
+    """
+    if shift_db is None:
+        shift_db = vegetation_shift(db_before, db_after, landcover)
+    mask = (
+        (db_after - db_before - shift_db >= brightening_db)
+        & (db_after >= threshold_db)
+        & np.isin(landcover, VEGETATION_CLASSES)
+    )
+    flagged_nearby = convolve(mask.astype(np.uint8), np.ones((3, 3), dtype=np.uint8), mode="constant")
+    return mask & (flagged_nearby >= 3)
+
+
+def with_flooded_vegetation(radar_codes: np.ndarray, vegetation: np.ndarray) -> np.ndarray:
+    """The radar water-change classes with FLOODED_VEGETATION where dry on both dates but flagged."""
+    return np.where(vegetation & (radar_codes == 0), FLOODED_VEGETATION, radar_codes)
+
+
 @dataclass
 class RadarFloodSummary:
     new_water_ha: float
     blind_new_water_ha: float  # radar new water where optical had no usable data
     optical_new_water_ha: float
     buildings_in_new_water: Optional[int]
+    flooded_vegetation_ha: Optional[float] = None  # None when it couldn't be checked
 
 
 def radar_flood_summary(
@@ -243,17 +305,24 @@ def radar_flood_summary(
     pixel_area_ha: float,
     building_rows: Optional[np.ndarray] = None,
     building_cols: Optional[np.ndarray] = None,
+    has_vegetation_check: bool = False,
 ) -> RadarFloodSummary:
-    """New water from radar, how much of it optical couldn't see, and the buildings in it."""
+    """
+    New water from radar, how much of it optical couldn't see, the buildings
+    in it, and the flooded vegetation when `radar_codes` include it (see
+    with_flooded_vegetation; `has_vegetation_check` says whether they do).
+    """
     new = radar_codes == 2
     buildings = None
     if building_rows is not None and building_cols is not None:
         buildings = int(new[building_rows, building_cols].sum())
+    vegetation = float((radar_codes == FLOODED_VEGETATION).sum()) * pixel_area_ha
     return RadarFloodSummary(
         new_water_ha=float(new.sum()) * pixel_area_ha,
         blind_new_water_ha=float((new & (optical_codes < 0)).sum()) * pixel_area_ha,
         optical_new_water_ha=float((optical_codes == 2).sum()) * pixel_area_ha,
         buildings_in_new_water=buildings,
+        flooded_vegetation_ha=vegetation if has_vegetation_check else None,
     )
 
 
@@ -268,4 +337,11 @@ def radar_findings(summary: RadarFloodSummary) -> List[Finding]:
     if summary.buildings_in_new_water:
         n = summary.buildings_in_new_water
         out.append(Finding("detail", f"{n:,} mapped building{'s sit' if n != 1 else ' sits'} in radar-mapped new water."))
+    if summary.flooded_vegetation_ha:
+        out.append(Finding(
+            "detail",
+            f"A further {format_area(summary.flooded_vegetation_ha)} of trees, shrubs or wetland brightened "
+            "sharply on radar, a likely sign of water under the canopy (a separate brightening check, "
+            "not counted in the new open water).",
+        ))
     return out

@@ -11,10 +11,13 @@ from core.radar import (
     RadarFloodSummary,
     backscatter_db,
     classify_radar_water,
+    flooded_vegetation,
     pass_coverage,
+    vegetation_shift,
     pick_radar_pair,
     radar_findings,
     radar_flood_summary,
+    with_flooded_vegetation,
 )
 from tests.conftest import make_da
 
@@ -147,3 +150,48 @@ def test_pick_radar_pair_prefers_the_pass_covering_the_aoi():
     assert pair.before.datetime.date() == date(2022, 6, 19)
     assert pass_coverage(pair.after_items, aoi) == 1.0
     assert round(pass_coverage([after[0]], aoi), 2) == 0.05
+
+
+def test_flooded_vegetation_needs_brightening_in_vegetation():
+    before = np.full((7, 7), -12.0)
+    after = before.copy()
+    after[1:6, 1:6] = -7.0     # a 5x5 block brightens by 5 dB
+    after[0, 6] = -7.0         # an isolated bright pixel (speckle)
+    landcover = np.full((7, 7), 10)  # tree cover
+    landcover[1:6, 5] = 50     # built-up column inside the block
+    mask = flooded_vegetation(before, after, landcover)
+    assert mask[1:6, 1:5].all()
+    assert not mask[1:6, 5].any()      # built-up isn't vegetation
+    assert not mask[0, 6]              # isolated pixel dropped
+    assert mask.sum() == 20
+    # Brightening below 3 dB, or open water after, isn't flagged.
+    assert not flooded_vegetation(before, before + 2, landcover).any()
+    assert not flooded_vegetation(np.full((7, 7), -30.0), np.full((7, 7), -20.0), landcover).any()
+    assert not flooded_vegetation(before, np.full((7, 7), np.nan), landcover).any()
+
+
+def test_flooded_vegetation_only_relabels_dry_pixels_and_is_summarised_separately():
+    radar_codes = np.array([[0, 2], [1, -1]])
+    vegetation = np.ones((2, 2), dtype=bool)
+    codes = with_flooded_vegetation(radar_codes, vegetation)
+    assert codes.tolist() == [[4, 2], [1, -1]]
+    summary = radar_flood_summary(codes, np.zeros((2, 2)), 1.0, has_vegetation_check=True)
+    assert summary.new_water_ha == 1.0
+    assert summary.flooded_vegetation_ha == 1.0
+    assert radar_flood_summary(radar_codes, np.zeros((2, 2)), 1.0).flooded_vegetation_ha is None
+    texts = [f.text for f in radar_findings(summary)]
+    assert "trees, shrubs or wetland" in texts[-1]
+
+
+def test_flooded_vegetation_discounts_scene_wide_brightening():
+    landcover = np.full((10, 10), 10)
+    before = np.full((10, 10), -12.0)
+    after = before + 2.0               # rain brightens everything by 2 dB
+    after[2:6, 2:6] += 2.5             # a flooded patch brightens 4.5 dB in all
+    assert vegetation_shift(before, after, landcover) == 2.0
+    mask = flooded_vegetation(before, after, landcover)
+    assert not mask.any()              # 2.5 dB above the shift is under 3 dB
+    after[2:6, 2:6] += 1.0
+    assert flooded_vegetation(before, after, landcover).sum() == 16
+    # A scene that darkened overall doesn't lower the bar.
+    assert vegetation_shift(before, before - 1.0, landcover) == 0.0

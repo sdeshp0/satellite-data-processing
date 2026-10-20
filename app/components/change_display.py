@@ -38,11 +38,16 @@ from core.confidence import assess_confidence, change_area_range
 from core.buildings import building_counts, exposure_table
 from core.landcover import landcover_breakdown
 from core.radar import (
+    BRIGHTENING_DB,
+    FLOODED_VEGETATION,
     MAX_DAYS_FROM_OPTICAL as MAX_RADAR_DAYS,
     WATER_THRESHOLD_DB,
     classify_radar_water,
+    flooded_vegetation,
     radar_findings,
+    vegetation_shift,
     radar_flood_summary,
+    with_flooded_vegetation,
 )
 from core.change import (
     EVENT_PRESETS,
@@ -71,6 +76,10 @@ ALL_INDEX_NAMES = ["ndvi", "evi", "savi", "nbr", "ndmi", "ndwi", "ndbi", "bsi"]
 # still fully visible and responsive in *width* (object-fit: cover fills
 # the box either way), just not perfectly aspect-correct.
 _SLIDER_ASSUMED_WIDTH_PX = 800
+
+# The radar map's classes: the water-change ones plus flooded vegetation.
+RADAR_LABELS = {**WATER_LABELS, FLOODED_VEGETATION: "Flooded Vegetation (Likely)"}
+RADAR_COLORS = {**WATER_COLORS, FLOODED_VEGETATION: "#807dba"}
 
 
 def _array_to_geotiff_bytes(arr: np.ndarray, reference) -> bytes:
@@ -122,7 +131,9 @@ def _plot_classification(codes: np.ndarray, labels, colors, title: str):
     return fig
 
 
-def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_keys, key_prefix: str) -> None:
+def _render_radar_section(
+    radar, radar_codes, summary, error: str, dates, date_keys, key_prefix: str, vegetation_note: str = ""
+) -> None:
     """Sentinel-1 flood map: dates, scenes used, threshold, headline areas and the class map."""
     st.markdown("**Radar flood map (Sentinel-1)**")
     date_col1, date_col2 = st.columns(2)
@@ -172,13 +183,24 @@ def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_k
         help="Lower is stricter. -18 dB is a common starting point; try -20 if land is being mapped as water.",
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("New water (radar)", format_area(summary.new_water_ha))
     col2.metric("New water (optical)", format_area(summary.optical_new_water_ha))
     col3.metric(
         "Radar-only, under cloud", format_area(summary.blind_new_water_ha),
         help="Radar new water where the optical images had cloud, shadow or no data.",
     )
+    col4.metric(
+        "Flooded vegetation (likely)",
+        "n/a" if summary.flooded_vegetation_ha is None else format_area(summary.flooded_vegetation_ha),
+        help=(
+            "Trees, shrubs, wetland or mangroves (ESA WorldCover) whose radar backscatter rose by "
+            f"{BRIGHTENING_DB:g} dB or more: water under a canopy bounces the signal back off the "
+            "trunks, so it brightens instead of going dark."
+        ),
+    )
+    if vegetation_note:
+        st.caption(vegetation_note)
     if summary.buildings_in_new_water:
         st.caption(f"{summary.buildings_in_new_water:,} mapped buildings sit in radar-mapped new water.")
 
@@ -190,10 +212,11 @@ def _render_radar_section(radar, radar_codes, summary, error: str, dates, date_k
         ax.axis("off")
         st.pyplot(fig)
     with map_col2:
-        st.pyplot(_plot_classification(radar_codes, WATER_LABELS, WATER_COLORS, "Radar water change"))
+        st.pyplot(_plot_classification(radar_codes, RADAR_LABELS, RADAR_COLORS, "Radar water change"))
     st.caption(
-        "Flooded vegetation and flooded streets can look bright rather than dark, "
-        "so radar may miss them; steep slopes facing away from the satellite can look like water."
+        "Flooded streets also brighten but aren't flagged, and dense, leafy canopy can hide water "
+        "from this radar entirely. Heavy rain or new leaves can brighten dry vegetation; "
+        "steep slopes facing away from the satellite can look like water."
     )
 
 
@@ -631,14 +654,15 @@ def change_display(
     # --- Land cover under the change (ESA WorldCover) ---
     reference = bands_before["nir"]
     grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
-    landcover_df, landcover_year, landcover_error = None, 0, None
-    if area.changed_ha:
+    landcover, landcover_df, landcover_year, landcover_error = None, None, 0, None
+    # Floods also need it to find flooded vegetation on the radar map.
+    if area.changed_ha or preset_key == "flood":
         try:
             with st.spinner("Loading land cover..."):
                 landcover, landcover_year = load_worldcover_cached(
                     reference, grid_key, before_item.datetime.year
                 )
-            if landcover is not None:
+            if landcover is not None and area.changed_ha:
                 landcover_df = landcover_breakdown(landcover, changed, codes >= 0, px_ha)
         except Exception as exc:  # network/data problems shouldn't break the page
             landcover_error = f"{type(exc).__name__}: {str(exc)[:150]}"
@@ -659,6 +683,7 @@ def change_display(
 
     # --- Radar flood map (Sentinel-1), floods only ---
     radar, radar_error, radar_codes, radar_summary = None, None, None, None
+    vegetation_note = ""
     radar_threshold = st.session_state.get(f"{key_prefix}_radar_threshold", WATER_THRESHOLD_DB)
     # The radar dates default to the optical ones but can be moved, e.g. to
     # the flood peak when cloud forced the optical "after" scene later.
@@ -681,7 +706,38 @@ def change_display(
                 )
             if radar is not None:
                 radar_codes = classify_radar_water(radar["before_db"], radar["after_db"], radar_threshold)
-                radar_summary = radar_flood_summary(radar_codes, codes, px_ha, b_rows, b_cols)
+                # Brightening only means something when both dates see the
+                # ground from the same angle.
+                check_vegetation = landcover is not None and radar["same_track"]
+                if check_vegetation:
+                    shift = vegetation_shift(radar["before_db"], radar["after_db"], landcover)
+                    vegetation = flooded_vegetation(
+                        radar["before_db"], radar["after_db"], landcover,
+                        threshold_db=radar_threshold, shift_db=shift,
+                    )
+                    radar_codes = with_flooded_vegetation(radar_codes, vegetation)
+                    vegetation_note = (
+                        "**How flooded vegetation is found:** on top of the dark-water threshold, the "
+                        f"after scene is compared with the before scene pixel by pixel. Where ESA WorldCover "
+                        f"shows trees, shrubs, wetland or mangroves and VV backscatter rose by {BRIGHTENING_DB:g} dB "
+                        "or more beyond the typical change across all vegetation in the AOI "
+                        f"({shift:+.1f} dB here, e.g. from rain-wet ground; a drop counts as 0) and didn't fall "
+                        "below the water threshold, the pixel is marked as likely flooded vegetation. Isolated "
+                        "marked pixels are dropped as speckle. Under dense, leafy canopy this radar sees only "
+                        "part of the water, so expect scattered patches rather than a full outline. This only "
+                        "relabels pixels that were dry on both dates: the open-water classes, the new-water "
+                        "areas and the building count are computed exactly as before and don't include it."
+                    )
+                elif landcover is None:
+                    vegetation_note = "Flooded vegetation isn't checked because land cover couldn't be loaded."
+                else:
+                    vegetation_note = (
+                        "Flooded vegetation isn't checked because the radar scenes are from different "
+                        "orbit tracks, where brightness changes with the viewing angle."
+                    )
+                radar_summary = radar_flood_summary(
+                    radar_codes, codes, px_ha, b_rows, b_cols, has_vegetation_check=check_vegetation
+                )
         except Exception as exc:  # network/data problems shouldn't break the page
             radar_error = f"{type(exc).__name__}: {str(exc)[:150]}"
 
@@ -776,7 +832,9 @@ def change_display(
         st.caption("No change detected to count buildings in.")
 
     if preset_key == "flood":
-        _render_radar_section(radar, radar_codes, radar_summary, radar_error, radar_dates, radar_date_keys, key_prefix)
+        _render_radar_section(
+            radar, radar_codes, radar_summary, radar_error, radar_dates, radar_date_keys, key_prefix, vegetation_note
+        )
 
     # --- Delta + classification maps ---
     map_col1, map_col2 = st.columns(2)
