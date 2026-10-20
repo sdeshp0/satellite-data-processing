@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,7 +7,13 @@ from rasterio.transform import from_bounds
 from rasterio.warp import transform_bounds
 
 from core import change, findings
-from core.landcover import landcover_breakdown, worldcover_on_grid
+from core.landcover import (
+    landcover_breakdown,
+    landcover_composition,
+    landcover_rgb,
+    worldcover_on_grid,
+    worldcover_year,
+)
 from tests.conftest import make_da
 
 
@@ -71,3 +78,34 @@ def test_findings_name_land_cover_and_built_up():
     texts = [f.text for f in findings.change_findings("wildfire", codes, baseline, area, 1.0, landcover=_breakdown())]
     assert "Most of the change was on tree cover (80%), followed by built-up (20%)." in texts
     assert "10 ha of built-up land falls in the change area." in texts
+
+
+def test_worldcover_year_without_datetime():
+    # WorldCover items carry a null datetime plus a start/end range.
+    import pystac
+
+    start = datetime(2021, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2021, 12, 31, tzinfo=timezone.utc)
+    item = pystac.Item("ESA_WorldCover_10m_2021_v200_N39W123", None, None, None, {},
+                       start_datetime=start, end_datetime=end)
+    assert worldcover_year(item) == 2021
+    bare = pystac.Item("ESA_WorldCover_10m_2020_v100_N39W123", None, None, None, {},
+                       start_datetime=start, end_datetime=end)
+    bare.common_metadata.start_datetime = None
+    assert worldcover_year(bare) == 2020
+
+
+def test_landcover_composition_shares_valid_pixels():
+    lc = np.array([[10, 10, 50, 0], [10, 10, 50, 0]], dtype=np.uint8)
+    valid = np.ones_like(lc, dtype=bool)
+    valid[0, 0] = False
+    df = landcover_composition(lc, valid, pixel_area_ha=2.0)
+    assert list(df["Land cover"]) == ["Tree cover", "Built-up"]
+    assert list(df["Area (ha)"]) == [6.0, 4.0]
+    assert list(df["Share of AOI (%)"]) == [60.0, 40.0]
+
+
+def test_landcover_rgb_uses_class_colours():
+    rgb = landcover_rgb(np.array([[50, 0]], dtype=np.uint8))
+    assert tuple(rgb[0, 0]) == (250, 0, 0)
+    assert tuple(rgb[0, 1]) == (255, 255, 255)

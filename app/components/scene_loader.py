@@ -65,7 +65,7 @@ def load_worldcover_cached(_reference: Any, grid_key: str) -> Tuple[Any, int]:
     """
     from core.landcover import search_worldcover, worldcover_on_grid
 
-    items = search_worldcover(_reference)
+    items, year = search_worldcover(_reference)
     if not items:
         return None, 0
-    return worldcover_on_grid(items, _reference), items[0].datetime.year
+    return worldcover_on_grid(items, _reference), year

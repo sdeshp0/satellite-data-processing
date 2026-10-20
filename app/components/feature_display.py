@@ -16,7 +16,9 @@ from matplotlib.patches import Patch
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 
-from app.components.scene_loader import load_scene_cached
+from app.components.scene_loader import load_scene_cached, load_worldcover_cached
+from core.change import pixel_area_ha
+from core.landcover import WORLDCOVER_CLASSES, landcover_composition, landcover_rgb
 from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.indices import compute_indices
 from core.viz import to_rgb
@@ -116,6 +118,9 @@ def feature_display(
     bands = resample_bands(bands)
     bands = scale_bands(bands)
     bands = apply_nodata_mask(bands)
+    # Land cover doesn't depend on clouds, so its composition covers every
+    # pixel with data, not just the cloud-free ones.
+    has_data = np.isfinite(bands["nir"].values)
     if mask_clouds:
         bands = apply_cloud_mask(bands)
 
@@ -204,9 +209,53 @@ def feature_display(
         else:
             st.caption("Select a single feature type to download its mask as GeoTIFF.")
 
+    _landcover_section(bands["nir"], has_data, key_prefix)
+
     st.caption(
         "Want road locations? Deriving roads from spectral reflectance "
         "isn't reliable at 10m resolution. A better approach is overlaying "
         "real road vector data (e.g. OpenStreetMap) as a reference layer "
         "rather than trying to detect roads from pixels -- not built yet."
     )
+
+
+def _landcover_section(reference, has_data: np.ndarray, key_prefix: str) -> None:
+    """ESA WorldCover composition of the AOI, with an optional class map."""
+    st.markdown("**Land cover in this AOI**")
+    grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
+    try:
+        with st.spinner("Loading land cover..."):
+            landcover, year = load_worldcover_cached(reference, grid_key)
+    except Exception as exc:  # network/data problems shouldn't break the page
+        st.caption(
+            "Land-cover data couldn't be loaded from Planetary Computer "
+            f"({type(exc).__name__}: {str(exc)[:150]}), so this section is skipped."
+        )
+        return
+    if landcover is None:
+        st.caption("No ESA WorldCover land-cover data covers this AOI.")
+        return
+
+    composition = landcover_composition(landcover, has_data, pixel_area_ha(reference))
+    if composition.empty:
+        st.caption("No land-cover data overlaps the scene's valid pixels.")
+        return
+    st.dataframe(composition, hide_index=True, width="stretch")
+    st.caption(
+        f"From ESA WorldCover {year} (10 m), a global land-cover map. It is a "
+        "fixed annual snapshot, so it's a useful reference for the outlines "
+        "above but won't reflect changes since then."
+    )
+
+    if st.checkbox("Show land-cover map", key=f"{key_prefix}_show_landcover"):
+        fig, ax = plt.subplots(figsize=(7, 7))
+        ax.imshow(landcover_rgb(np.where(has_data, landcover, 0)))
+        ax.axis("off")
+        present = set(np.unique(landcover[has_data]).tolist())
+        handles = [
+            Patch(color=color, label=label)
+            for code, (label, color) in WORLDCOVER_CLASSES.items()
+            if code in present
+        ]
+        ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
+        st.pyplot(fig)

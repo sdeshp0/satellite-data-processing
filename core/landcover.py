@@ -5,7 +5,8 @@ change fell on, from ESA WorldCover (10 m, global, on Planetary Computer).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence, Tuple
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -37,8 +38,21 @@ WORLDCOVER_CLASSES: Dict[int, Tuple[str, str]] = {
 BUILT_UP = 50
 
 
-def search_worldcover(reference: xr.DataArray) -> List[Any]:
-    """WorldCover items covering the reference grid, latest year only."""
+def worldcover_year(item: Any) -> Optional[int]:
+    """
+    Product year of a WorldCover item. Its STAC `datetime` is null (the map
+    covers a whole year), so fall back to `start_datetime`, then the year
+    in the item id (e.g. ESA_WorldCover_10m_2021_v200_N36W123).
+    """
+    when = item.datetime or item.common_metadata.start_datetime
+    if when is not None:
+        return when.year
+    match = re.search(r"_(20\d\d)_", item.id)
+    return int(match.group(1)) if match else None
+
+
+def search_worldcover(reference: xr.DataArray) -> Tuple[List[Any], int]:
+    """WorldCover items covering the reference grid, latest year only, and that year (0 if none)."""
     from pystac_client import Client
 
     bbox = transform_bounds(reference.rio.crs, "EPSG:4326", *reference.rio.bounds())
@@ -47,9 +61,10 @@ def search_worldcover(reference: xr.DataArray) -> List[Any]:
     )
     items = list(catalog.search(collections=[WORLDCOVER_COLLECTION], intersects=mapping(box(*bbox))).items())
     if not items:
-        return []
-    latest = max(item.datetime.year for item in items if item.datetime)
-    return [item for item in items if item.datetime and item.datetime.year == latest]
+        return [], 0
+    years = {id(item): worldcover_year(item) or 0 for item in items}
+    latest = max(years.values())
+    return [item for item in items if years[id(item)] == latest], latest
 
 
 def _signed(href: str) -> str:
@@ -114,3 +129,28 @@ def landcover_breakdown(
     columns = ["Land cover", "Changed area (ha)", "Share of detected change (%)", "Share of this land cover changed (%)"]
     df = pd.DataFrame(rows, columns=columns)
     return df.sort_values("Changed area (ha)", ascending=False).reset_index(drop=True)
+
+
+def landcover_composition(landcover: np.ndarray, valid: np.ndarray, pixel_area_ha: float) -> pd.DataFrame:
+    """Area and share of each land-cover class over the valid pixels, largest first."""
+    valid = valid & (landcover != WORLDCOVER_NODATA)
+    total = int(valid.sum())
+    rows = []
+    for code, (label, _) in WORLDCOVER_CLASSES.items():
+        n = int((valid & (landcover == code)).sum())
+        if n:
+            rows.append({
+                "Land cover": label,
+                "Area (ha)": round(n * pixel_area_ha, 1),
+                "Share of AOI (%)": round(100 * n / total, 1),
+            })
+    df = pd.DataFrame(rows, columns=["Land cover", "Area (ha)", "Share of AOI (%)"])
+    return df.sort_values("Area (ha)", ascending=False).reset_index(drop=True)
+
+
+def landcover_rgb(landcover: np.ndarray) -> np.ndarray:
+    """WorldCover codes as an RGB image in the product's own colours (no data = white)."""
+    rgb = np.full(landcover.shape + (3,), 255, dtype=np.uint8)
+    for code, (_, hex_color) in WORLDCOVER_CLASSES.items():
+        rgb[landcover == code] = [int(hex_color[i:i + 2], 16) for i in (1, 3, 5)]
+    return rgb

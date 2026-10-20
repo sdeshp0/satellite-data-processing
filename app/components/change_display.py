@@ -397,8 +397,8 @@ def change_display(
         )
 
     # --- Comparability checks: are these two scenes really apples-to-apples? ---
-    # Covers UTM zone, MGRS tile, platform, seasonal (day-of-year) distance,
-    # and sun elevation -- see core.change.comparability_checks. Consolidated
+    # Covers UTM zone, MGRS tile, platform and seasonal (day-of-year)
+    # distance -- see core.change.comparability_checks. Consolidated
     # there (rather than inline here) so the same logic can also score
     # candidate pairs before one is picked; see scene_selector.scene_picker's
     # compare_item option and sample_analyses.py's automatic pair selection.
@@ -549,7 +549,7 @@ def change_display(
             if landcover is not None:
                 landcover_df = landcover_breakdown(landcover, changed, codes >= 0, px_ha)
         except Exception as exc:  # network/data problems shouldn't break the page
-            landcover_error = type(exc).__name__
+            landcover_error = f"{type(exc).__name__}: {str(exc)[:150]}"
 
     findings = findings_markdown(change_findings(
         preset_key, codes, preset["baseline_codes"], area, px_ha, notes, index_name,
