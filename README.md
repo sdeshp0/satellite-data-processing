@@ -150,9 +150,9 @@ additional workflows or pages.
   Single Scene (index overlay) or Change Detection (a "damage area"
   outline derived from the classification mask).
 
-### Change & Recovery
-- 📈 **The change over time**: takes the latest Change Detection comparison
-  and plots the event's index (NBR, NDWI or NDVI), one least-cloudy scene
+### Change Detection: change over time
+- 📈 **Track this area over time** (an opt-in section under the
+  comparison's maps): plots the event's index (NBR, NDWI or NDVI), one least-cloudy scene
   per period, inside the affected area and on nearby unchanged land.
 - 🌦️ **Event or season?** If unchanged land moved the same way over the
   same dates, the key findings say much of the change is seasonal.
@@ -287,8 +287,7 @@ satellite-data-processing/
 │   ├── pages/
 │   │   ├── 01_Single_Scene.py
 │   │   ├── 02_Change_Detection.py
-│   │   ├── 03_Feature_Identification.py
-│   │   └── 04_Change_Recovery.py
+│   │   └── 03_Feature_Identification.py
 │   │
 │   ├── components/
 │   │   ├── __init__.py
@@ -299,7 +298,7 @@ satellite-data-processing/
 │   │   ├── change_display.py     # Before/after comparison rendering, swipe compare
 │   │   ├── sample_analyses.py    # Curated one-click event comparisons
 │   │   ├── feature_display.py    # Spectral feature identification rendering
-│   │   └── recovery_display.py   # Change & Recovery time series
+│   │   └── recovery_display.py   # Change Detection's change-over-time section
 │   │
 │   └── requirements.txt
 │

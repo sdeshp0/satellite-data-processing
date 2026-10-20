@@ -1,13 +1,14 @@
 """
-Change & Recovery: the event's index over time inside the area Change
-Detection flagged, against nearby unchanged land (see core.timeseries).
+Change Detection's "Change over time" section: the event's index over
+time inside the area the comparison flagged, against nearby unchanged
+land (see core.timeseries).
 """
 
 from __future__ import annotations
 
 import hashlib
 from datetime import date
-from typing import Any, Dict, List, Tuple
+from typing import Any, List, Tuple
 
 import altair as alt
 import numpy as np
@@ -17,7 +18,7 @@ from rasterio.enums import Resampling
 
 from app.components.scene_loader import load_scene_cached
 from app.components.scene_selector import _search_sentinel2_cached
-from core.change import EVENT_PRESETS, _scl_valid_mask, align_to_reference
+from core.change import _scl_valid_mask, align_to_reference
 from core.findings import findings_markdown
 from core.indices import compute_indices
 from core.timeseries import (
@@ -101,51 +102,44 @@ def _chart(points: List[SamplePoint], preset, index_name: str, before: date, aft
     return (event + lines + dots).properties(height=360)
 
 
-def recovery_display(result: Dict[str, Any]) -> None:
-    """The Change & Recovery page body for one Change Detection result."""
-    preset_key, index_name = result["preset_key"], result["index_name"]
-    preset = RECOVERY_PRESETS.get(preset_key)
-    before_item, after_item = result["before_item"], result["after_item"]
+def recovery_display(
+    preset_key: str, index_name: str, codes: np.ndarray, reference, before_item: Any, after_item: Any,
+    aoi_wkt: str, key_prefix: str,
+) -> None:
+    """The change-over-time section for one comparison (wildfire, flood or logging presets)."""
+    preset = RECOVERY_PRESETS[preset_key]
     before, after = before_item.datetime.date(), after_item.datetime.date()
-    if preset is None:
-        st.info(
-            f"Change & Recovery covers the wildfire, flood and logging presets. The last comparison used "
-            f"{EVENT_PRESETS[preset_key]['label']}, whose classes mix increases and decreases."
-        )
-        return
-
-    st.caption(
-        f"Tracks {preset.area_name} from the Change Detection comparison ({before} to {after}, "
-        f"{EVENT_PRESETS[preset_key]['label']}) against {preset.control_name}."
-    )
     col1, col2, col3 = st.columns(3)
-    months_before = col1.number_input("Months before", 1, 36, preset.months_before, key="recovery_months_before")
-    months_after = col2.number_input("Months after", 1, 60, preset.months_after, key="recovery_months_after")
+    months_before = col1.number_input("Months before", 1, 36, preset.months_before, key=f"{key_prefix}_ts_months_before")
+    months_after = col2.number_input("Months after", 1, 60, preset.months_after, key=f"{key_prefix}_ts_months_after")
     step = col3.selectbox("One scene every", [1, 2, 3, 6], index=[1, 2, 3, 6].index(preset.step_months),
-                          format_func=lambda m: f"{m} month{'s' if m > 1 else ''}", key="recovery_step")
+                          format_func=lambda m: f"{m} month{'s' if m > 1 else ''}", key=f"{key_prefix}_ts_step")
     start = add_months(before, -int(months_before))
     end = min(add_months(after, int(months_after)), date.today())
 
-    with st.spinner("Searching Sentinel-2 scenes..."):
-        items = _search_sentinel2_cached(result["aoi_wkt"], start, end, 60)
+    try:
+        with st.spinner("Searching Sentinel-2 scenes..."):
+            items = _search_sentinel2_cached(aoi_wkt, start, end, 60)
+    except Exception as exc:  # network/data problems shouldn't break the page
+        st.caption(f"Scenes couldn't be searched on Planetary Computer ({type(exc).__name__}), so this is skipped.")
+        return
     scenes = pick_scenes(items, start, step, keep=[before_item, after_item])
     if len(scenes) > MAX_SCENES:
         st.warning(f"That window needs {len(scenes)} scenes; showing the first {MAX_SCENES}. Sample less often to cover it all.")
         scenes = scenes[:MAX_SCENES]
 
-    codes, reference = result["codes"], result["reference"]
     affected = np.isin(codes, preset.affected_codes)
     control = codes == preset.control_code
     if not affected.any():
         st.info(f"The comparison found no {preset.area_name.removeprefix('the ')}, so there's nothing to track.")
         return
     grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}|{hashlib.md5(codes.tobytes()).hexdigest()}"
-    points, failed = _sample_points(scenes, result["aoi_wkt"], index_name, reference, affected, control, grid_key)
+    points, failed = _sample_points(scenes, aoi_wkt, index_name, reference, affected, control, grid_key)
     clear = [p for p in points if p.gap is not None]
 
     summary = recovery_summary(points, before, after)
     with st.container(border=True):
-        st.markdown("**Key findings**")
+        st.markdown("**Over time**")
         if summary is None:
             st.markdown("Not enough clear scenes around the event dates to measure change and recovery.")
         else:
