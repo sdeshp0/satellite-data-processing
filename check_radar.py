@@ -18,7 +18,8 @@ Run from the repository root:
 
     python check_radar.py                                    # Harvey, flood peak
     python check_radar.py --before 2017-08-05 --after 2017-08-30
-    python check_radar.py --sample missouri_river_flood_2019 --before 2019-02-20 --after 2019-03-20
+    python check_radar.py --sample missouri_river_flood_2019 --before 2018-10-01 --after 2019-03-22
+    python check_radar.py --lat 29.80 --lon -95.65 --size-km 20      # Addicks/Barker reservoirs
 
 Needs real network access to Microsoft Planetary Computer.
 """
@@ -46,6 +47,8 @@ def main() -> int:
     parser.add_argument("--sample", default="harvey_houston_2017", help="sample analysis key (default harvey_houston_2017)")
     parser.add_argument("--before", type=date.fromisoformat, help="before date (default 2017-08-05)")
     parser.add_argument("--after", type=date.fromisoformat, help="after date (default 2017-08-30)")
+    parser.add_argument("--lat", type=float, help="AOI centre latitude (overrides the sample's)")
+    parser.add_argument("--lon", type=float, help="AOI centre longitude (overrides the sample's)")
     parser.add_argument("--size-km", type=float)
     parser.add_argument("--res", type=float, default=20.0, help="grid resolution in metres (default 20)")
     args = parser.parse_args()
@@ -58,13 +61,15 @@ def main() -> int:
     sample = SAMPLE_ANALYSES[args.sample]
     before = args.before or date(2017, 8, 5)
     after = args.after or date(2017, 8, 30)
+    lat = args.lat if args.lat is not None else sample["lat"]
+    lon = args.lon if args.lon is not None else sample["lon"]
     size_km = args.size_km or max(sample.get("width_km", 10), sample.get("height_km", 10))
-    print(f"{args.sample}: centre {sample['lat']:.4f}, {sample['lon']:.4f}, {size_km} km square, {args.res} m grid")
+    print(f"centre {lat:.4f}, {lon:.4f}, {size_km} km square, {args.res} m grid")
     print(f"dates: before {before}, after {after}")
 
     import core.radar as rd
 
-    reference = _reference_grid(sample["lat"], sample["lon"], size_km, args.res)
+    reference = _reference_grid(lat, lon, size_km, args.res)
     window = timedelta(days=rd.MAX_DAYS_FROM_OPTICAL)
 
     _step("1. Radar scenes around each date")
