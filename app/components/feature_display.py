@@ -1,7 +1,8 @@
 """
 Feature identification display: threshold selected indices into cleaned
-masks and crosshatch them on the scene's RGB image; the masks' outlines
-are offered as a GeoJSON download.
+masks, crosshatch them on an interactive map (with basemaps, land cover
+and buildings as layers), and list each region they contain; the masks'
+outlines are offered as a GeoJSON download.
 """
 
 from __future__ import annotations
@@ -17,19 +18,22 @@ from matplotlib.patches import Patch
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 
-from app.components.scene_loader import load_scene_cached, load_worldcover_cached
-from core.change import pixel_area_ha
+from app.components.scene_loader import load_buildings_cached, load_scene_cached, load_worldcover_cached
+from core.change import format_area, pixel_area_ha
+from core.inventory import dominant_class, feature_regions, inventory_findings
 from core.landcover import WORLDCOVER_CLASSES, landcover_composition, landcover_rgb
 from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
 from core.indices import compute_indices
-from core.viz import crosshatch, to_rgb
+from core.viz import to_rgb
 from core.features import (
     FEATURE_TYPES,
     threshold_mask,
     extract_contours,
     contours_to_geojson,
-    region_stats,
 )
+from core.webmap import feature_map, region_geojson
+
+MAP_HEIGHT_PX = 560
 
 
 def _hex_to_rgb(color: str) -> tuple:
@@ -155,38 +159,72 @@ def feature_display(
     # --- Masks + contours per feature ---
     masks = {}
     contours_by_feature = {}
-    stats_rows = []
     for key in selected_features:
         info = FEATURE_TYPES[key]
-        arr = indices[info["index"]]
-        mask = threshold_mask(arr, thresholds[key], info["direction"], min_region_px)
+        mask = threshold_mask(indices[info["index"]], thresholds[key], info["direction"], min_region_px)
         masks[key] = mask
         contours_by_feature[key] = extract_contours(mask)
 
-        stats = region_stats(mask, reference)
-        stats_rows.append({
-            "Feature": info["label"],
-            "Regions": stats["num_regions"],
-            "Area (km\u00b2)": round(stats["area_km2"], 2),
-        })
+    px_ha = pixel_area_ha(reference)
+    clear_ha = float(np.isfinite(indices["ndvi"]).sum()) * px_ha
+    landcover, landcover_year, landcover_note = _load_landcover(reference, item.datetime.year)
+    building_rows = building_cols = None
+    if st.checkbox(
+        "Count buildings in each region", key=f"{key_prefix}_buildings",
+        help="Loads Microsoft building footprints for the AOI (can take a while for large cities).",
+    ):
+        building_rows, building_cols = _load_buildings(reference)
 
-    # --- RGB + crosshatch overlay, one colour per feature type ---
-    # Same hatching as Change Detection's hotspots: the image stays
-    # visible between the lines, unlike filled or outlined regions.
-    rgb = to_rgb(bands)
-    handles = []
+    inventory = {}
     for key in selected_features:
-        info = FEATURE_TYPES[key]
-        rgb = crosshatch(rgb, masks[key], color=_hex_to_rgb(info["color"]), alpha=0.9)
-        handles.append(Patch(facecolor="none", edgecolor=info["color"], hatch="xx", label=info["label"]))
-    fig, ax = plt.subplots(figsize=(7, 7))
-    ax.imshow(rgb)
-    ax.axis("off")
+        regions, labelled, areas = feature_regions(masks[key], reference, px_ha, building_rows, building_cols)
+        cover = dominant_class(labelled, landcover, regions) if landcover is not None else {}
+        inventory[key] = (regions, labelled, areas, cover)
 
-    ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
-    st.pyplot(fig)
+    # --- Map, then the per-feature list that drives its zoom ---
+    st.markdown("**Map**")
+    map_slot = st.container()
+    rows = _inventory_rows(selected_features, inventory, building_rows is not None)
+    if rows:
+        st.markdown("**Regions found**")
+        for key in selected_features:
+            regions, _, areas, _ = inventory[key]
+            found = inventory_findings(key, regions, areas, clear_ha)
+            st.markdown(f"*{FEATURE_TYPES[key]['label']}:* " + " ".join(f.text for f in found))
+        table = st.dataframe(
+            pd.DataFrame([row for row, _ in rows]), hide_index=True, width="stretch",
+            on_select="rerun", selection_mode="single-row", key=f"{key_prefix}_inventory",
+            column_config={"Area (ha)": st.column_config.NumberColumn(format="%.1f")},
+        )
+        picked = table.selection.rows
+        st.caption("Select a row to zoom the map to that region. Location is the part of the AOI its centre falls in.")
+    else:
+        picked = []
 
-    st.dataframe(pd.DataFrame(stats_rows), hide_index=True, width="stretch")
+    # A selection can outlive its row when the thresholds change.
+    focus = rows[picked[0]][1] if picked and picked[0] < len(rows) else None
+    with map_slot:
+        rgb = to_rgb(bands)
+        hatches = [(FEATURE_TYPES[k]["label"], masks[k], _hex_to_rgb(FEATURE_TYPES[k]["color"])) for k in selected_features]
+        geojson_regions = _regions_geojson(selected_features, inventory, reference, building_rows is not None)
+        buildings = None
+        if building_rows is not None:
+            buildings = np.zeros(reference.shape, dtype=bool)
+            buildings[building_rows, building_cols] = True
+        fmap = feature_map(
+            reference, rgb, hatches, geojson_regions, _tooltip_fields(building_rows is not None, landcover is not None),
+            buildings=buildings,
+            landcover_rgb=None if landcover is None else landcover_rgb(np.where(has_data, landcover, 0)),
+            focus=focus,
+            focus_label="" if focus is None else f"#{focus.rank}, {format_area(focus.area_ha)}",
+        )
+        st.iframe(fmap.get_root().render(), height=MAP_HEIGHT_PX)
+        st.caption(
+            "Each feature is crosshatched in its colour over the scene. Use the layer list to switch to the "
+            "basemap or street map, or turn on land cover"
+            + (" and buildings" if buildings is not None else "")
+            + ". Hover a region for its details."
+        )
 
     # --- Downloads ---
     dl_col1, dl_col2 = st.columns(2)
@@ -214,7 +252,7 @@ def feature_display(
         else:
             st.caption("Select a single feature type to download its mask as GeoTIFF.")
 
-    _landcover_section(bands["nir"], has_data, item.datetime.year, key_prefix)
+    _landcover_section(reference, has_data, landcover, landcover_year, landcover_note, key_prefix)
 
     st.caption(
         "Want road locations? Deriving roads from spectral reflectance "
@@ -224,21 +262,96 @@ def feature_display(
     )
 
 
-def _landcover_section(reference, has_data: np.ndarray, scene_year: int, key_prefix: str) -> None:
-    """ESA WorldCover composition of the AOI, with an optional class map."""
-    st.markdown("**Land cover in this AOI**")
+def _load_landcover(reference, scene_year: int):
+    """ESA WorldCover on the reference grid, its year, and a note when it couldn't be loaded."""
     grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
     try:
         with st.spinner("Loading land cover..."):
             landcover, year = load_worldcover_cached(reference, grid_key, scene_year)
     except Exception as exc:  # network/data problems shouldn't break the page
-        st.caption(
+        return None, 0, (
             "Land-cover data couldn't be loaded from Planetary Computer "
             f"({type(exc).__name__}: {str(exc)[:150]}), so this section is skipped."
         )
-        return
     if landcover is None:
-        st.caption("No ESA WorldCover land-cover data covers this AOI.")
+        return None, 0, "No ESA WorldCover land-cover data covers this AOI."
+    return landcover, year, ""
+
+
+def _load_buildings(reference):
+    """Building-centre pixels (rows, cols), or (None, None) with a caption when they can't be loaded."""
+    grid_key = f"{reference.rio.crs}|{tuple(reference.rio.transform())}|{reference.shape}"
+    try:
+        with st.spinner("Loading building footprints..."):
+            rows, cols, found = load_buildings_cached(reference, grid_key)
+    except Exception as exc:  # network/data problems shouldn't break the page
+        st.caption(f"Building footprints couldn't be loaded ({type(exc).__name__}), so they're left out.")
+        return None, None
+    if not found:
+        st.caption("No Microsoft building footprints cover this AOI.")
+        return None, None
+    return rows, cols
+
+
+def _inventory_rows(selected_features, inventory, with_buildings: bool):
+    """(table row, Region) per listed region, features in the order selected."""
+    out = []
+    for key in selected_features:
+        regions, _, _, cover = inventory[key]
+        for r in regions:
+            row = {
+                "Feature": FEATURE_TYPES[key]["label"],
+                "Rank": r.rank,
+                "Area (ha)": round(r.area_ha, 1),
+                "Location": r.sector,
+                "Lat": round(r.lat, 5),
+                "Lon": round(r.lon, 5),
+            }
+            if cover:
+                row["Mostly (WorldCover)"] = WORLDCOVER_CLASSES.get(cover[r.label], ("Unknown", ""))[0]
+            if with_buildings:
+                row["Buildings"] = r.buildings
+            out.append((row, r))
+    return out
+
+
+def _tooltip_fields(with_buildings: bool, with_cover: bool):
+    fields = [("feature", "Feature"), ("rank", "Rank"), ("area", "Area"), ("location", "Location")]
+    if with_cover:
+        fields.append(("cover", "Mostly"))
+    if with_buildings:
+        fields.append(("buildings", "Buildings"))
+    return fields
+
+
+def _regions_geojson(selected_features, inventory, reference, with_buildings: bool):
+    """Hover shapes for every listed region of every selected feature."""
+    collection = {"type": "FeatureCollection", "features": []}
+    for key in selected_features:
+        regions, labelled, _, cover = inventory[key]
+        if not regions:
+            continue
+        props = {}
+        for r in regions:
+            props[r.label] = {
+                "feature": FEATURE_TYPES[key]["label"],
+                "rank": r.rank,
+                "area": format_area(r.area_ha),
+                "location": r.sector,
+            }
+            if cover:
+                props[r.label]["cover"] = WORLDCOVER_CLASSES.get(cover[r.label], ("Unknown", ""))[0]
+            if with_buildings:
+                props[r.label]["buildings"] = r.buildings
+        collection["features"] += region_geojson(labelled, regions, reference, props)["features"]
+    return collection
+
+
+def _landcover_section(reference, has_data: np.ndarray, landcover, year: int, note: str, key_prefix: str) -> None:
+    """ESA WorldCover composition of the AOI, with an optional class map."""
+    st.markdown("**Land cover in this AOI**")
+    if landcover is None:
+        st.caption(note)
         return
 
     composition = landcover_composition(landcover, has_data, pixel_area_ha(reference))

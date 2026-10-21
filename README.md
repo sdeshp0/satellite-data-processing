@@ -129,15 +129,23 @@ additional workflows or pages.
   position rather than something scene selection alone can fix.
 
 ### Feature Identification (experimental)
-- 🖍️ **Spectral feature outlines**: thresholds a chosen index (NDWI, NDBI,
-  NDVI, or BSI) into a cleaned mask and traces its boundary directly on
-  the RGB image, for water/rivers, urban/built-up areas, vegetation, and
-  bare soil -- all several pixels wide at Sentinel-2's 10m resolution, so
-  well suited to this approach.
+- 🖍️ **Spectral feature masks**: thresholds a chosen index (NDWI, NDBI,
+  NDVI, or BSI) into a cleaned mask and crosshatches it in its own colour,
+  for water/rivers, urban/built-up areas, vegetation, and bare soil --
+  all several pixels wide at Sentinel-2's 10m resolution, so well suited
+  to this approach.
+- 🗺️ **Interactive map**: zoomable Leaflet map with a satellite or street
+  basemap, the scene, each feature's hatching, ESA WorldCover land cover
+  and (optionally) Microsoft building footprints as switchable layers.
+  Hovering a region shows its rank, area, location and land cover.
+- 📋 **Regions found**: a summary line per feature (how many water bodies
+  or patches, their total area, the largest and where it is, how many are
+  tiny) and a table of the largest 200 regions with area, location,
+  coordinates, main WorldCover class and building count. Selecting a row
+  zooms the map to that region.
 - 🎚️ **Adjustable thresholds and minimum region size** per feature type,
   with noisy sub-threshold blips filtered out via morphological cleanup
   (`scikit-image`) before contours are extracted.
-- 📐 **Region stats** (count and area in km²) per feature type.
 - 💾 **Downloads**: outlines as georeferenced GeoJSON (opens directly in
   QGIS or similar), or a single selected feature's mask as GeoTIFF.
 - 🚫 **Deliberately not attempted**: roads and individual buildings --
@@ -279,6 +287,8 @@ satellite-data-processing/
 │   ├── change.py          # Grid alignment, delta, classification, comparability checks,
 │   │                       #   coverage overlap, automatic best-pair selection
 │   ├── features.py        # Spectral feature masks, cleanup, contour extraction
+│   ├── inventory.py       # Per-region feature inventory and its summary
+│   ├── webmap.py          # Interactive folium map of a scene's grid and layers
 │   ├── viz.py             # RGB percentile stretch, SCL visualization
 │   └── utils.py            # AOI helpers, band scaling/resampling, cloud masking
 │
