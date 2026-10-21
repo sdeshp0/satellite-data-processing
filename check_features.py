@@ -13,7 +13,10 @@ For each site:
   3. ESA WorldCover on the same grid.
   4. Per land-cover class: pixel count and the 10th/50th/90th percentile
      of each index.
-  5. Per feature: candidate rules scored against WorldCover (precision =
+  5. Alignment: how well water and vegetation match WorldCover when
+     WorldCover is shifted a few pixels each way. A best match away from
+     no shift means the two grids don't line up.
+  6. Per feature: candidate rules scored against WorldCover (precision =
      share of flagged pixels WorldCover agrees with; recall = share of
      WorldCover's pixels that were flagged; F1 = balance of the two), and
      the classes most of the false hits fall in.
@@ -148,7 +151,8 @@ def _load(site: Dict, max_dim: int):
             print("No scene with 20% cloud or less in the window.")
             return None
         item = min(items, key=lambda i: i.properties.get("eo:cloud_cover", 100))
-        label = f"{item.id} ({item.datetime.date()}, {item.properties.get('eo:cloud_cover', '?')}% cloud)"
+        label = (f"{item.id} ({item.datetime.date()}, {item.properties.get('eo:cloud_cover', '?')}% cloud, "
+                 f"processing baseline {item.properties.get('s2:processing_baseline', '?')})")
         print(f"{len(items)} scenes; using {label}")
     except Exception:
         traceback.print_exc()
@@ -164,6 +168,13 @@ def _load(site: Dict, max_dim: int):
             ix["mndwi"] = (green - swir1) / (green + swir1)
         clear = np.isfinite(ix["ndvi"]) & np.isfinite(ix["mndwi"])
         print(f"grid {clear.shape}, coverage {coverage:.0%}, clear {clear.mean():.0%}")
+        # Reflectance should sit roughly in 0-1; many negative values point
+        # to a scaling or offset problem rather than real surfaces.
+        for name in ("blue", "green", "red", "nir", "swir1", "swir2"):
+            values = bands[name].values[clear]
+            p1, p50, p99 = np.percentile(values, [1, 50, 99])
+            print(f"  {name:<6} reflectance p1 {p1:+.3f}  p50 {p50:+.3f}  p99 {p99:+.3f}  "
+                  f"negative {np.mean(values < 0):.1%}")
     except Exception:
         traceback.print_exc()
         return None
@@ -198,11 +209,46 @@ def _percentiles(ix, clear, landcover) -> None:
         print(f"{label:<26}{int(sel.sum()):>8}  {cells}")
 
 
+def _f1(mask: np.ndarray, target: np.ndarray) -> float:
+    hit = int((mask & target).sum())
+    return 2 * hit / (int(mask.sum()) + int(target.sum())) if mask.any() or target.any() else 0.0
+
+
+def _alignment(ix, clear, landcover, max_shift: int = 4) -> None:
+    """Water and vegetation agreement with WorldCover shifted up to max_shift pixels each way."""
+    _step("5. Alignment with WorldCover (F1 of the current rule, WorldCover shifted)")
+    m = max_shift
+    inner = (slice(m, -m), slice(m, -m))
+    checks = {
+        "water (NDWI > 0)": (ix["ndwi"] > 0, TARGETS["water"]),
+        "vegetation (NDVI > 0.3)": (ix["ndvi"] > 0.3, TARGETS["vegetation"]),
+    }
+    for name, (rule, codes) in checks.items():
+        target_full = np.isin(landcover, codes)
+        mask = (rule & clear)[inner]
+        if target_full[inner].sum() < 200:
+            print(f"  {name:<26} too little of this class here to check")
+            continue
+        best, best_shift = -1.0, (0, 0)
+        # Nearest shifts first, and a farther one must do clearly better, so
+        # noise doesn't pick a shift.
+        shifts = sorted(((dy, dx) for dy in range(-m, m + 1) for dx in range(-m, m + 1)),
+                        key=lambda s: abs(s[0]) + abs(s[1]))
+        for dy, dx in shifts:
+            shifted = np.roll(target_full, (dy, dx), axis=(0, 1))[inner] & clear[inner]
+            f1 = _f1(mask, shifted)
+            if f1 > best + 0.005:
+                best, best_shift = f1, (dy, dx)
+        at_zero = _f1(mask, target_full[inner] & clear[inner])
+        print(f"  {name:<26} no shift F1 {at_zero:.2f}; best F1 {best:.2f} with WorldCover moved "
+              f"{best_shift[0]:+d} rows, {best_shift[1]:+d} cols")
+
+
 def _score(ix, clear, landcover) -> Dict[str, Dict[str, Optional[Tuple[float, float, float]]]]:
     """(precision, recall, F1) per feature and rule; None where WorldCover has too few target pixels."""
     from core.landcover import WORLDCOVER_CLASSES
 
-    _step("5. Candidate rules scored against WorldCover")
+    _step("6. Candidate rules scored against WorldCover")
     scores: Dict[str, Dict] = {}
     for feature, rules in _rules(ix).items():
         target = clear & np.isin(landcover, TARGETS[feature])
@@ -277,6 +323,7 @@ def main() -> int:
             continue
         ix, clear, landcover, _ = loaded
         _percentiles(ix, clear, landcover)
+        _alignment(ix, clear, landcover)
         results[name] = _score(ix, clear, landcover)
 
     if not results:
