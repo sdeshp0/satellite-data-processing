@@ -27,6 +27,10 @@ from core.indices import compute_indices
 from core.viz import to_rgb
 from core.features import (
     FEATURE_TYPES,
+    built_or_bare_raw,
+    built_reference,
+    clean_mask,
+    split_built_or_bare,
     threshold_mask,
     extract_contours,
     contours_to_geojson,
@@ -80,9 +84,9 @@ def feature_display(
     st.subheader("Feature Identification")
     st.caption(
         "Thresholds a spectral index into a cleaned mask and crosshatches "
-        "it on the RGB image, one colour per feature type. Works well for water bodies, urban "
-        "extent, and vegetation/bare-soil boundaries -- all several pixels "
-        "wide at Sentinel-2's 10m resolution. Roads and individual "
+        "it on the map, one colour per feature type. Water and vegetation come straight from "
+        "their indices; urban and bare soil share one rule and are split with a land-cover map. "
+        "Works for features several pixels wide at Sentinel-2's 10m resolution. Roads and individual "
         "buildings are sub-pixel and can't be reliably extracted this way "
         "(see the note at the bottom of this page)."
     )
@@ -143,7 +147,7 @@ def feature_display(
         info = FEATURE_TYPES[key]
         with col:
             thresholds[key] = st.slider(
-                f"{info['label']} threshold",
+                f"{info['label']}: NDVI below" if info.get("built_or_bare") else f"{info['label']} threshold",
                 min_value=-1.0, max_value=1.0,
                 value=float(info["default_threshold"]),
                 step=0.05,
@@ -156,24 +160,33 @@ def feature_display(
         help="Connected regions smaller than this are dropped as noise.",
     )
 
-    # --- Masks + contours per feature ---
-    masks = {}
-    contours_by_feature = {}
-    for key in selected_features:
-        info = FEATURE_TYPES[key]
-        mask = threshold_mask(indices[info["index"]], thresholds[key], info["direction"], min_region_px)
-        masks[key] = mask
-        contours_by_feature[key] = extract_contours(mask)
-
     px_ha = pixel_area_ha(reference)
     clear_ha = float(np.isfinite(indices["ndvi"]).sum()) * px_ha
     landcover, landcover_year, landcover_note = _load_landcover(reference, item.datetime.year)
     building_rows = building_cols = None
     if st.checkbox(
         "Count buildings in each region", key=f"{key_prefix}_buildings",
-        help="Loads Microsoft building footprints for the AOI (can take a while for large cities).",
+        help=("Loads Microsoft building footprints for the AOI (can take a while for large cities). "
+              "They also help tell built-up land from bare ground where it was built after the land-cover map."),
     ):
         building_rows, building_cols = _load_buildings(reference)
+    split_ref = built_reference(landcover, building_rows, building_cols)
+
+    # --- Masks + contours per feature ---
+    water_threshold = thresholds.get("water", FEATURE_TYPES["water"]["default_threshold"])
+    masks = {}
+    contours_by_feature = {}
+    for key in selected_features:
+        info = FEATURE_TYPES[key]
+        if info.get("built_or_bare"):
+            raw = built_or_bare_raw(indices, thresholds[key], water_threshold)
+            mask = clean_mask(split_built_or_bare(raw, split_ref, key), min_region_px)
+        else:
+            mask = threshold_mask(indices[info["index"]], thresholds[key], info["direction"], min_region_px)
+        masks[key] = mask
+        contours_by_feature[key] = extract_contours(mask)
+    if any(FEATURE_TYPES[k].get("built_or_bare") for k in selected_features):
+        st.caption(_built_or_bare_note(split_ref is not None, landcover_year, building_rows is not None))
 
     inventory = {}
     for key in selected_features:
@@ -260,6 +273,21 @@ def feature_display(
         "real road vector data (e.g. OpenStreetMap) as a reference layer "
         "rather than trying to detect roads from pixels -- not built yet."
     )
+
+
+def _built_or_bare_note(split: bool, landcover_year: int, with_buildings: bool) -> str:
+    """How urban and bare soil were found, for the caption under the controls."""
+    text = (
+        "Urban and bare soil can't be told apart by colour alone (they reflect almost the same light), "
+        "so both start from one rule: land that is neither water nor vegetation. "
+    )
+    if not split:
+        return text + ("No land-cover map was available to split them, so both show the same "
+                       "built-up-or-bare area here.")
+    source = f"ESA WorldCover {landcover_year}'s built-up class"
+    if with_buildings:
+        source += " and the building footprints"
+    return text + f"It is then split using {source}: inside it counts as urban, outside as bare soil."
 
 
 def _load_landcover(reference, scene_year: int):

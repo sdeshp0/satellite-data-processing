@@ -129,11 +129,12 @@ additional workflows or pages.
   position rather than something scene selection alone can fix.
 
 ### Feature Identification (experimental)
-- 🖍️ **Spectral feature masks**: thresholds a chosen index (NDWI, NDBI,
-  NDVI, or BSI) into a cleaned mask and crosshatches it in its own colour,
-  for water/rivers, urban/built-up areas, vegetation, and bare soil --
-  all several pixels wide at Sentinel-2's 10m resolution, so well suited
-  to this approach.
+- 🖍️ **Spectral feature masks**: water (NDWI) and vegetation (NDVI) are
+  thresholded into cleaned masks and crosshatched in their own colours.
+  Urban and bare soil reflect almost the same light at every site tested
+  (`check_features.py`), so they share one rule -- land that is neither
+  water nor vegetation -- and are split using ESA WorldCover's built-up
+  class, plus building footprints when loaded.
 - 🗺️ **Interactive map**: zoomable Leaflet map with a satellite or street
   basemap, the scene, each feature's hatching, ESA WorldCover land cover
   and (optionally) Microsoft building footprints as switchable layers.
