@@ -9,7 +9,11 @@ different landscapes.
 For each site:
 
   1. The least-cloudy Sentinel-2 scene in the site's date window.
-  2. The scene's bands and indices, loaded the way the app loads them.
+  2. The scene's bands and indices, loaded the way the app loads them,
+     with each band's reflectance range. When the AOI needs more than one
+     Sentinel-2 tile, each tile is also checked on its own: its processing
+     baseline, the reflectance offset its own metadata declares, the
+     offset the app applies, and its blue/NIR reflectance.
   3. ESA WorldCover on the same grid.
   4. Per land-cover class: pixel count and the 10th/50th/90th percentile
      of each index.
@@ -160,7 +164,7 @@ def _load(site: Dict, max_dim: int):
 
     _step("2. Bands and indices")
     try:
-        bands, coverage, _ = load_scene(item, aoi, max_dim)
+        bands, coverage, load_info = load_scene(item, aoi, max_dim)
         bands = apply_cloud_mask(apply_nodata_mask(scale_bands(resample_bands(bands))))
         ix = compute_indices(bands)
         green, swir1 = bands["green"].values, bands["swir1"].values
@@ -175,6 +179,8 @@ def _load(site: Dict, max_dim: int):
             p1, p50, p99 = np.percentile(values, [1, 50, 99])
             print(f"  {name:<6} reflectance p1 {p1:+.3f}  p50 {p50:+.3f}  p99 {p99:+.3f}  "
                   f"negative {np.mean(values < 0):.1%}")
+        if load_info.get("mosaic_attempted"):
+            _check_tiles(item, aoi)
     except Exception:
         traceback.print_exc()
         return None
@@ -191,6 +197,53 @@ def _load(site: Dict, max_dim: int):
         traceback.print_exc()
         return None
     return ix, clear, landcover, label
+
+
+def _declared_offset(item) -> str:
+    """BOA_ADD_OFFSET values from the scene's own product metadata XML, or why they couldn't be read."""
+    import re
+
+    import planetary_computer as pc
+    import requests
+
+    asset = getattr(item, "assets", {}).get("product-metadata")
+    if asset is None:
+        return "no product-metadata asset"
+    try:
+        xml = requests.get(pc.sign(asset.href.split("?", 1)[0]), timeout=30).text
+    except Exception as exc:
+        return f"metadata unreadable ({type(exc).__name__})"
+    values = sorted(set(re.findall(r"<BOA_ADD_OFFSET[^>]*>(-?\d+)</BOA_ADD_OFFSET>", xml)))
+    return ", ".join(values) if values else "none declared"
+
+
+def _check_tiles(item, aoi) -> None:
+    """Each tile covering the AOI on its own: declared vs applied offset, and blue/NIR reflectance."""
+    from core.load import _boa_offset_for_item, load_scene
+    from core.stac import search_companion_tiles
+    from core.utils import scale_bands
+
+    try:
+        tiles = [item] + search_companion_tiles(aoi, item, max_items=3)
+    except Exception:
+        traceback.print_exc()
+        return
+    print("  tiles covering the AOI, each loaded alone:")
+    for tile in tiles:
+        try:
+            bands, coverage, _ = load_scene(tile, aoi, 256, enable_mosaic=False)
+            valid = bands["scl"].values > 0
+            bands = scale_bands(bands)
+            parts = []
+            for name in ("blue", "nir"):
+                values = bands[name].values[valid]
+                parts.append(f"{name} p50 {np.median(values):+.3f} negative {np.mean(values < 0):.0%}"
+                             if values.size else f"{name} no data")
+            print(f"    {tile.id}: baseline {tile.properties.get('s2:processing_baseline', '?')}, "
+                  f"declared offset {_declared_offset(tile)}, applied {_boa_offset_for_item(tile):+.0f}, "
+                  f"covers {coverage:.0%}; " + "; ".join(parts))
+        except Exception:
+            traceback.print_exc()
 
 
 def _percentiles(ix, clear, landcover) -> None:
