@@ -37,3 +37,29 @@ def test_geometric_validity_mask_partial_overlap():
 def test_geometric_validity_mask_no_overlap():
     mask = load._geometric_validity_mask(Window(0, 0, 10, 10), Window(0, 0, 0, 0), (4, 4))
     assert not mask.any()
+
+
+def test_mosaic_fill_from_neighbouring_utm_zone_stays_in_range():
+    # A companion tile in the next UTM zone sits rotated against the
+    # primary's grid; pixels it doesn't cover must not be filled with the
+    # reprojection's integer nodata (e.g. -2147483648).
+    import numpy as np
+    from pyproj import Transformer
+    from rasterio.enums import Resampling
+
+    from tests.conftest import make_da
+
+    x16, y16 = Transformer.from_crs(4326, 32616, always_xy=True).transform(-90.15, 30.0)
+    x15, y15 = Transformer.from_crs(4326, 32615, always_xy=True).transform(-90.15, 30.0)
+    primary_valid = np.zeros((200, 200), bool)
+    primary_valid[:, 100:] = True
+    for dtype in ("int32", "uint16"):
+        primary = make_da(np.full((200, 200), 500, dtype=dtype), res=100.0,
+                          origin=(x16 - 10000, y16 + 10000), crs="EPSG:32616")
+        companion = make_da(np.full((200, 200), 700, dtype=dtype), res=100.0,
+                            origin=(x15 - 10000, y15 + 10000), crs="EPSG:32615")
+        merged, valid = load._mosaic_fill(primary, primary_valid, companion, np.ones((200, 200), bool),
+                                          Resampling.bilinear)
+        assert merged.dtype == primary.dtype
+        assert set(np.unique(merged.values[valid])) <= {500, 700}
+        assert valid[:, :100].mean() > 0.9

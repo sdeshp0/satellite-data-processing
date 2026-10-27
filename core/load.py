@@ -388,8 +388,15 @@ def _mosaic_fill(
     """
     from core.change import align_to_reference
 
+    # Reprojected as float so pixels the companion doesn't cover come back
+    # NaN. Integer bands would come back holding rioxarray's default
+    # nodata (the dtype's minimum or maximum, e.g. -2147483648 for int32),
+    # and where the companion's grid is rotated against the primary's (a
+    # tile in the neighbouring UTM zone) the nearest-neighbour validity
+    # mask below still marks some of those pixels valid -- they'd be
+    # written in as wildly out-of-range reflectance.
     companion_values_aligned = align_to_reference(
-        companion_da.values, companion_da, primary_da, resampling=resampling
+        companion_da.values.astype("float32"), companion_da, primary_da, resampling=resampling
     )
 
     companion_valid_da = xr.DataArray(
@@ -401,10 +408,14 @@ def _mosaic_fill(
         companion_valid_da.values, companion_valid_da, primary_da, resampling=Resampling.nearest
     ) > 0
 
+    companion_valid_aligned &= np.isfinite(companion_values_aligned)
     fill_mask = (~primary_valid) & companion_valid_aligned
 
     merged_values = primary_da.values.copy()
-    merged_values[fill_mask] = companion_values_aligned[fill_mask]
+    filled = companion_values_aligned[fill_mask]
+    if np.issubdtype(merged_values.dtype, np.integer):
+        filled = np.rint(filled)
+    merged_values[fill_mask] = filled
     merged_valid = primary_valid | companion_valid_aligned
 
     merged_da = xr.DataArray(

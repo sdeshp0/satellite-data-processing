@@ -1,9 +1,9 @@
 """
 Feature Identification page (experimental).
 
-Highlights outlines of water bodies/rivers, urban/built-up areas,
-vegetation, and bare soil directly on a scene's RGB image, by thresholding
-a spectral index into a cleaned mask and tracing its boundary.
+Crosshatches water bodies/rivers, urban/built-up areas, vegetation, and
+bare soil on an interactive map of a scene, by thresholding a spectral
+index into a cleaned mask, and lists each region found.
 
 Deliberately a standalone page first -- if this holds up well across
 different scenes/AOIs, the same overlay can be added to Single Scene and
