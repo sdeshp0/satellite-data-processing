@@ -84,9 +84,12 @@ WORLDCOVER_BUILT_UP = 50
 # threshold is used instead. Picked from check_features.py's per-class
 # index percentiles: water pixels sit well above 0.35 NDWI and land well
 # below -0.15; vegetation's best fixed cut-off ranged 0.2 to 0.4 by site.
+# Vegetation stops at 0.4: in California's Central Valley Otsu picked 0.47,
+# splitting green crops from dry ones, and lost a third of the vegetated
+# land (F1 0.67 against 0.82 for the 0.3 default).
 AUTO_THRESHOLD_BOUNDS: Dict[str, Tuple[float, float]] = {
     "water": (-0.15, 0.35),
-    "vegetation": (0.2, 0.5),
+    "vegetation": (0.2, 0.4),
 }
 # Each side of an automatic split must hold at least this share of pixels.
 AUTO_MIN_SIDE_SHARE = 0.02
