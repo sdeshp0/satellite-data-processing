@@ -15,7 +15,7 @@ from PIL import Image
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 
-from app.components.scene_loader import load_scene_cached
+from app.components.scene_loader import load_scene_cached, warn_if_overcorrected
 from core.indices import compute_indices
 from core.viz import to_rgb
 from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_nodata_mask
@@ -285,6 +285,7 @@ def index_display(
         bands = apply_nodata_mask(bands)
         if mask_clouds:
             bands = apply_cloud_mask(bands)
+    warn_if_overcorrected(bands)
 
     # --- RGB ---
     # Constrained to the same centered-column width as the AOI preview on

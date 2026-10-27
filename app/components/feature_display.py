@@ -18,7 +18,12 @@ from matplotlib.patches import Patch
 from rasterio.io import MemoryFile
 from shapely.geometry import Polygon
 
-from app.components.scene_loader import load_buildings_cached, load_scene_cached, load_worldcover_cached
+from app.components.scene_loader import (
+    load_buildings_cached,
+    load_scene_cached,
+    load_worldcover_cached,
+    warn_if_overcorrected,
+)
 from core.change import format_area, pixel_area_ha
 from core.inventory import dominant_class, feature_regions, inventory_findings
 from core.landcover import WORLDCOVER_CLASSES, landcover_composition, landcover_rgb
@@ -136,6 +141,7 @@ def feature_display(
     bands = resample_bands(bands)
     bands = scale_bands(bands)
     bands = apply_nodata_mask(bands)
+    warn_if_overcorrected(bands)
     # Land cover doesn't depend on clouds, so its composition covers every
     # pixel with data, not just the cloud-free ones.
     has_data = np.isfinite(bands["nir"].values)
