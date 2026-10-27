@@ -24,3 +24,16 @@ def test_nodata_mask_masks_scl_zero_and_keeps_scl(bands):
     for name in ("red", "nir", "swir2"):
         assert np.isnan(out[name].values).tolist() == [[False, False], [False, True]]
     assert out["scl"].values.tolist() == bands["scl"].values.tolist()
+
+
+def test_negative_reflectance_share_ignores_water_and_clouds():
+    import numpy as np
+
+    from core.utils import negative_reflectance_share
+    from tests.conftest import make_da
+
+    scl = np.array([[4, 4, 5, 6, 9]])  # vegetation, vegetation, bare, water, cloud
+    blue = np.array([[-0.02, 0.03, -0.01, -0.05, -0.2]])
+    green = np.array([[0.02, 0.04, 0.05, -0.05, -0.2]])
+    shares = negative_reflectance_share({"scl": make_da(scl), "blue": make_da(blue), "green": make_da(green)})
+    assert round(shares["blue"], 3) == round(2 / 3, 3) and shares["green"] == 0.0

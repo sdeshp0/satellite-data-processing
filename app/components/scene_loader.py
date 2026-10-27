@@ -110,3 +110,22 @@ def load_radar_cached(_reference: Any, grid_key: str, before_date: str, after_da
         "after_date": pair.after.datetime.date().isoformat(),
         "same_track": pair.same_track,
     }
+
+
+def warn_if_overcorrected(bands: Dict[str, Any], label: str = "This scene") -> None:
+    """
+    A warning when a scene's blue or green reflectance is often negative
+    over clear land (see core.utils.negative_reflectance_share): its
+    atmospheric correction overshot, so colours and indices are unreliable.
+    """
+    from core.utils import NEGATIVE_REFLECTANCE_WARN_SHARE, negative_reflectance_share
+
+    shares = negative_reflectance_share(bands)
+    worst = max(shares, key=shares.get)
+    if shares[worst] > NEGATIVE_REFLECTANCE_WARN_SHARE:
+        st.warning(
+            f"{label} looks badly corrected for haze: {shares[worst]:.0%} of its clear land has {worst} "
+            "reflectance below zero, which real surfaces can't have. ESA's processing removed too much "
+            "atmosphere, so its colours look off and indices can run past -1 or +1. Results from it are "
+            "unreliable; try a scene from another date."
+        )

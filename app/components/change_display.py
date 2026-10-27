@@ -27,6 +27,7 @@ from app.components.scene_loader import (
     load_radar_cached,
     load_scene_cached,
     load_worldcover_cached,
+    warn_if_overcorrected,
 )
 from app.components.index_display import CATEGORY_STYLE, INDEX_INFO
 from core.utils import resample_bands, scale_bands
@@ -441,6 +442,9 @@ def change_display(
         # earlier version did) left the RGB preview unaligned, which is why
         # one image could look stretched relative to the other.
         bands_after = align_bands(bands_after, bands_before["nir"])
+
+    warn_if_overcorrected(bands_before, f"The before scene ({before_item.datetime.date()})")
+    warn_if_overcorrected(bands_after, f"The after scene ({after_item.datetime.date()})")
 
     # --- Data coverage check (per scene) ---
     # Sentinel-2 granules aren't always fully covered by real data at swath

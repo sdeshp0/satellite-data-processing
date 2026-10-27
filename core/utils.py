@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Any, Tuple, Iterable
 from shapely.geometry import box, mapping
+import numpy as np
 import xarray as xr
 import rioxarray  # noqa: F401  # required for .rio accessor
 
@@ -150,3 +151,30 @@ def apply_nodata_mask(bands: Dict[str, xr.DataArray]) -> Dict[str, xr.DataArray]
         name: da if name == "scl" else da.where(valid)
         for name, da in bands.items()
     }
+
+
+# SCL classes left out when checking for negative reflectance: no data,
+# cloud shadow, clouds, cirrus, snow, and water (dark enough to dip just
+# below zero even in a well-corrected scene).
+_QUALITY_SKIP_CLASSES = (0, 3, 6, 8, 9, 10, 11)
+# Above this share of negative blue or green reflectance over clear land,
+# the scene's atmospheric correction has overshot (New Orleans,
+# 2023-10-14: 92% of blue below zero, in both ESA processings), and colours
+# and indices from it are unreliable. Well-corrected scenes sit near 0%.
+NEGATIVE_REFLECTANCE_WARN_SHARE = 0.10
+
+
+def negative_reflectance_share(
+    bands: Dict[str, xr.DataArray], names: Iterable[str] = ("blue", "green")
+) -> Dict[str, float]:
+    """
+    Share of clear land pixels with negative reflectance, per band, from
+    scaled bands (see scale_bands). 0.0 when there is no clear land.
+    """
+    land = ~np.isin(bands["scl"].values, _QUALITY_SKIP_CLASSES)
+    out = {}
+    for name in names:
+        values = bands[name].values[land]
+        values = values[np.isfinite(values)]
+        out[name] = float(np.mean(values < 0)) if values.size else 0.0
+    return out
