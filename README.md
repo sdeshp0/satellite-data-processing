@@ -144,9 +144,10 @@ additional workflows or pages.
   tiny) and a table of the largest 200 regions with area, location,
   coordinates, main WorldCover class and building count. Selecting a row
   zooms the map to that region.
-- 🎚️ **Adjustable thresholds and minimum region size** per feature type,
-  with noisy sub-threshold blips filtered out via morphological cleanup
-  (`scikit-image`) before contours are extracted.
+- 🎚️ **Fixed, tuned rules** rather than sliders: each feature uses the
+  rule that scored best against ESA WorldCover across six test
+  landscapes, listed on the page under "Settings used", with specks under
+  0.2 ha dropped as noise (`scikit-image`).
 - 💾 **Downloads**: outlines as georeferenced GeoJSON (opens directly in
   QGIS or similar), or a single selected feature's mask as GeoTIFF.
 - 🚫 **Deliberately not attempted**: roads and individual buildings --

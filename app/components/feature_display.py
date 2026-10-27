@@ -26,6 +26,7 @@ from core.utils import resample_bands, scale_bands, apply_cloud_mask, apply_noda
 from core.indices import compute_indices
 from core.viz import to_rgb
 from core.features import (
+    BUILT_OR_BARE_MIN_NDBI,
     FEATURE_TYPES,
     built_or_bare_raw,
     built_reference,
@@ -38,6 +39,10 @@ from core.features import (
 from core.webmap import feature_map, region_geojson
 
 MAP_HEIGHT_PX = 560
+# Connected regions smaller than this are dropped as noise (20 pixels at
+# Sentinel-2's 10 m), with a floor in pixels for coarse previews.
+MIN_REGION_HA = 0.2
+MIN_REGION_FLOOR_PX = 4
 
 
 def _hex_to_rgb(color: str) -> tuple:
@@ -83,8 +88,8 @@ def feature_display(
     """
     st.subheader("Feature Identification")
     st.caption(
-        "Thresholds a spectral index into a cleaned mask and crosshatches "
-        "it on the map, one colour per feature type. Water and vegetation come straight from "
+        "Finds each feature with fixed rules tuned against ESA WorldCover (listed under "
+        "\"Settings used\") and crosshatches it on the map, one colour per feature type. Water and vegetation come straight from "
         "their indices; urban and bare soil share one rule and are split with a land-cover map. "
         "Works for features several pixels wide at Sentinel-2's 10m resolution. Roads and individual "
         "buildings are sub-pixel and can't be reliably extracted this way "
@@ -140,27 +145,8 @@ def feature_display(
     indices = compute_indices(bands)
     reference = bands["nir"]
 
-    # --- Per-feature threshold controls ---
-    threshold_cols = st.columns(len(selected_features))
-    thresholds = {}
-    for col, key in zip(threshold_cols, selected_features):
-        info = FEATURE_TYPES[key]
-        with col:
-            thresholds[key] = st.slider(
-                f"{info['label']}: NDVI below" if info.get("built_or_bare") else f"{info['label']} threshold",
-                min_value=-1.0, max_value=1.0,
-                value=float(info["default_threshold"]),
-                step=0.05,
-                key=f"{key_prefix}_threshold_{key}",
-            )
-
-    min_region_px = st.slider(
-        "Minimum region size (pixels)", min_value=1, max_value=200, value=20,
-        key=f"{key_prefix}_min_region",
-        help="Connected regions smaller than this are dropped as noise.",
-    )
-
     px_ha = pixel_area_ha(reference)
+    min_region_px = max(MIN_REGION_FLOOR_PX, round(MIN_REGION_HA / px_ha))
     clear_ha = float(np.isfinite(indices["ndvi"]).sum()) * px_ha
     landcover, landcover_year, landcover_note = _load_landcover(reference, item.datetime.year)
     building_rows = building_cols = None
@@ -173,20 +159,23 @@ def feature_display(
     split_ref = built_reference(landcover, building_rows, building_cols)
 
     # --- Masks + contours per feature ---
-    water_threshold = thresholds.get("water", FEATURE_TYPES["water"]["default_threshold"])
+    water_threshold = FEATURE_TYPES["water"]["default_threshold"]
     masks = {}
     contours_by_feature = {}
     for key in selected_features:
         info = FEATURE_TYPES[key]
         if info.get("built_or_bare"):
-            raw = built_or_bare_raw(indices, thresholds[key], water_threshold)
+            raw = built_or_bare_raw(indices, info["default_threshold"], water_threshold)
             mask = clean_mask(split_built_or_bare(raw, split_ref, key), min_region_px)
         else:
-            mask = threshold_mask(indices[info["index"]], thresholds[key], info["direction"], min_region_px)
+            mask = threshold_mask(indices[info["index"]], info["default_threshold"], info["direction"], min_region_px)
         masks[key] = mask
         contours_by_feature[key] = extract_contours(mask)
-    if any(FEATURE_TYPES[k].get("built_or_bare") for k in selected_features):
-        st.caption(_built_or_bare_note(split_ref is not None, landcover_year, building_rows is not None))
+    with st.expander("Settings used"):
+        st.markdown(_settings_markdown(
+            selected_features, min_region_px, px_ha, mask_clouds,
+            landcover_year if split_ref is not None else 0, building_rows is not None,
+        ))
 
     inventory = {}
     for key in selected_features:
@@ -214,7 +203,7 @@ def feature_display(
     else:
         picked = []
 
-    # A selection can outlive its row when the thresholds change.
+    # A selection can outlive its row when the feature choice changes.
     focus = rows[picked[0]][1] if picked and picked[0] < len(rows) else None
     with map_slot:
         rgb = to_rgb(bands)
@@ -275,19 +264,43 @@ def feature_display(
     )
 
 
-def _built_or_bare_note(split: bool, landcover_year: int, with_buildings: bool) -> str:
-    """How urban and bare soil were found, for the caption under the controls."""
-    text = (
-        "Urban and bare soil can't be told apart by colour alone (they reflect almost the same light), "
-        "so both start from one rule: land that is neither water nor vegetation. "
+def _settings_markdown(
+    selected_features, min_region_px: int, px_ha: float, mask_clouds: bool,
+    landcover_year: int, with_buildings: bool,
+) -> str:
+    """The fixed rules behind each selected feature, in plain words, for the "Settings used" panel."""
+    veg = FEATURE_TYPES["vegetation"]["default_threshold"]
+    water = FEATURE_TYPES["water"]["default_threshold"]
+    lines = []
+    for key in selected_features:
+        info = FEATURE_TYPES[key]
+        if info.get("built_or_bare"):
+            rule = (f"land that is not water (NDWI {water:.1f} or below) and not vegetation "
+                    f"(NDVI below {info['default_threshold']:.1f}), with NDBI above {BUILT_OR_BARE_MIN_NDBI:.1f}")
+            if landcover_year:
+                built = f"ESA WorldCover {landcover_year}'s built-up class"
+                if key == "urban":
+                    rule += f", inside {built}" + (" or near a building footprint" if with_buildings else "")
+                else:
+                    rule += f", outside {built}" + (" and away from building footprints" if with_buildings else "")
+            else:
+                rule += " (no land-cover map was available to split urban from bare soil, so both show this same area)"
+        elif key == "water":
+            rule = f"NDWI above {water:.1f}"
+        else:
+            rule = f"NDVI above {veg:.1f}"
+        lines.append(f"- **{info['label']}:** {rule}.")
+    lines.append(
+        f"- **Smallest region kept:** {min_region_px} pixels ({min_region_px * px_ha:.2f} ha); "
+        "smaller specks and holes are treated as noise."
     )
-    if not split:
-        return text + ("No land-cover map was available to split them, so both show the same "
-                       "built-up-or-bare area here.")
-    source = f"ESA WorldCover {landcover_year}'s built-up class"
-    if with_buildings:
-        source += " and the building footprints"
-    return text + f"It is then split using {source}: inside it counts as urban, outside as bare soil."
+    lines.append(f"- **Clouds and shadows:** {'masked out' if mask_clouds else 'not masked'} (sidebar).")
+    lines.append(
+        "\nThese rules scored best against ESA WorldCover across six test landscapes (San Francisco, Phoenix, "
+        "Cairo, New Orleans, California's Central Valley and Rondônia; see `check_features.py`). Urban and "
+        "bare soil reflect almost the same light, which is why a land-cover map splits them."
+    )
+    return "\n".join(lines)
 
 
 def _load_landcover(reference, scene_year: int):
