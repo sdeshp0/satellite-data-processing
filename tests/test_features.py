@@ -53,3 +53,32 @@ def test_region_stats_area():
     stats = region_stats(mask, make_da(np.zeros((10, 10)), res=10.0))
     assert stats["num_regions"] == 2
     assert stats["area_km2"] == pytest.approx(14 * 100 / 1e6)
+
+
+def test_built_or_bare_excludes_water_and_vegetation_then_splits():
+    from core.features import built_or_bare_raw, built_reference, split_built_or_bare
+
+    # Pixels: water, forest, city, desert, shadow, cloud (NaN).
+    indices = {
+        "ndwi": np.array([[0.5, -0.6, -0.2, -0.2, -0.1, np.nan]]),
+        "ndvi": np.array([[-0.4, 0.8, 0.1, 0.06, 0.1, np.nan]]),
+        "ndbi": np.array([[0.3, -0.2, 0.05, 0.1, -0.4, np.nan]]),
+    }
+    raw = built_or_bare_raw(indices, ndvi_below=0.3, water_threshold=0.0)
+    assert raw.tolist() == [[False, False, True, True, False, False]]
+
+    landcover = np.array([[80, 10, 50, 60, 50, 50]])
+    ref = built_reference(landcover)
+    assert split_built_or_bare(raw, ref, "urban").tolist() == [[False, False, True, False, False, False]]
+    assert split_built_or_bare(raw, ref, "bare_soil").tolist() == [[False, False, False, True, False, False]]
+    # Without a reference both get the whole built-or-bare area.
+    assert split_built_or_bare(raw, None, "urban").tolist() == raw.tolist()
+
+
+def test_built_reference_adds_buildings_near_footprints():
+    from core.features import built_reference
+
+    landcover = np.full((5, 5), 60)
+    ref = built_reference(landcover, np.array([2]), np.array([2]))
+    assert ref.sum() == 9 and ref[1:4, 1:4].all()
+    assert built_reference(None) is None

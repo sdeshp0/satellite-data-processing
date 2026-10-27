@@ -4,11 +4,11 @@ from core.scene_summary import scene_findings, surface_types
 
 
 def _indices():
-    # Pixels: water, dense veg, sparse veg, bare (BSI), built-up (NDBI), other, cloudy.
+    # Pixels: water, dense veg, sparse veg, bare, built-up, other (very low NDBI), cloudy.
     return {
         "ndwi": np.array([0.3, -0.5, -0.4, -0.2, -0.1, -0.1, 0.5]),
         "ndvi": np.array([-0.2, 0.8, 0.4, 0.1, 0.1, 0.1, -0.1]),
-        "ndbi": np.array([-0.3, -0.4, -0.2, -0.05, 0.1, -0.1, 0.0]),
+        "ndbi": np.array([-0.3, -0.4, -0.2, -0.05, 0.1, -0.3, 0.0]),
         "bsi": np.array([-0.3, -0.3, -0.1, 0.1, -0.1, -0.1, 0.0]),
     }
 

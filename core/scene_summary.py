@@ -4,10 +4,10 @@ the AOI is water, vegetation, or built-up / bare ground.
 
 Each clear pixel gets one surface type, checked in order: water (NDWI),
 then vegetation (NDVI, split into dense and sparse), then built-up or bare
-ground (NDBI or BSI). The thresholds are the Feature Identification
-defaults (core.features.FEATURE_TYPES), so the two pages agree. Built-up
+ground (the rest, unless NDBI is very low). The thresholds are the Feature
+Identification defaults (core.features), so the two pages agree. Built-up
 land and bare soil are one class because their Sentinel-2 indices overlap
-too much to separate reliably.
+too much to separate reliably (see check_features.py).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Dict, List
 import numpy as np
 
 from core.change import format_area
-from core.features import FEATURE_TYPES
+from core.features import BUILT_OR_BARE_MIN_NDBI, FEATURE_TYPES
 from core.findings import Finding
 
 # NDVI above this counts as dense vegetation (closed canopy, healthy crops).
@@ -38,10 +38,7 @@ def surface_types(indices: Dict[str, np.ndarray], clear: np.ndarray) -> Dict[str
         water = clear & (indices["ndwi"] > FEATURE_TYPES["water"]["default_threshold"])
         vegetated = clear & ~water & (indices["ndvi"] > FEATURE_TYPES["vegetation"]["default_threshold"])
         dense = vegetated & (indices["ndvi"] > DENSE_NDVI)
-        built_or_bare = clear & ~water & ~vegetated & (
-            (indices["ndbi"] > FEATURE_TYPES["urban"]["default_threshold"])
-            | (indices["bsi"] > FEATURE_TYPES["bare_soil"]["default_threshold"])
-        )
+        built_or_bare = clear & ~water & ~vegetated & (indices["ndbi"] > BUILT_OR_BARE_MIN_NDBI)
     other = clear & ~water & ~vegetated & ~built_or_bare
     return {
         "water": water,
