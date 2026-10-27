@@ -78,6 +78,83 @@ BUILT_OR_BARE_MIN_NDBI = -0.2
 # ESA WorldCover's built-up class.
 WORLDCOVER_BUILT_UP = 50
 
+# Range an automatic (Otsu) water or vegetation threshold must fall in to
+# be used; outside it the scene has no clear two-way split on that index
+# (e.g. almost no water, so Otsu splits dry land in two) and the default
+# threshold is used instead. Picked from check_features.py's per-class
+# index percentiles: water pixels sit well above 0.35 NDWI and land well
+# below -0.15; vegetation's best fixed cut-off ranged 0.2 to 0.4 by site.
+AUTO_THRESHOLD_BOUNDS: Dict[str, Tuple[float, float]] = {
+    "water": (-0.15, 0.35),
+    "vegetation": (0.2, 0.5),
+}
+# Each side of an automatic split must hold at least this share of pixels.
+AUTO_MIN_SIDE_SHARE = 0.02
+# And the split must explain at least this share of the values' variance
+# (see split_separation). A single bell curve scores about 0.64 however
+# Otsu cuts it, so anything near that means there are no two groups.
+AUTO_MIN_SEPARATION = 0.7
+
+
+def split_separation(values: np.ndarray, threshold: float) -> float:
+    """
+    Share of the variance of `values` explained by splitting them at
+    `threshold` (Otsu's between-class variance over total variance):
+    near 1 for two tight, distant groups, about 0.64 for one bell curve.
+    """
+    total = float(values.var())
+    if total == 0:
+        return 0.0
+    high = values > threshold
+    share = float(high.mean())
+    if share in (0.0, 1.0):
+        return 0.0
+    gap = float(values[high].mean() - values[~high].mean())
+    return share * (1 - share) * gap * gap / total
+
+
+def auto_threshold(
+    values: np.ndarray, default: float, bounds: Tuple[float, float]
+) -> Tuple[float, bool]:
+    """
+    Otsu's threshold for `values` (finite ones, clipped to -1..1), and
+    True; or (`default`, False) when it falls outside `bounds`, leaves
+    less than AUTO_MIN_SIDE_SHARE of the pixels on either side, or
+    separates them less than AUTO_MIN_SEPARATION.
+    """
+    from skimage.filters import threshold_otsu
+
+    values = np.clip(values[np.isfinite(values)], -1.0, 1.0)
+    if values.size < 100 or values.min() == values.max():
+        return default, False
+    threshold = float(threshold_otsu(values))
+    above = float(np.mean(values > threshold))
+    if (
+        not bounds[0] <= threshold <= bounds[1]
+        or min(above, 1 - above) < AUTO_MIN_SIDE_SHARE
+        or split_separation(values, threshold) < AUTO_MIN_SEPARATION
+    ):
+        return default, False
+    return threshold, True
+
+
+def scene_thresholds(indices: Dict[str, np.ndarray]) -> Dict[str, Tuple[float, bool]]:
+    """
+    This scene's water (NDWI) and vegetation (NDVI) thresholds, each as
+    (threshold, picked automatically). Vegetation's is picked among
+    non-water pixels, so water doesn't pull it down. Urban and bare soil
+    use both: not water, and NDVI below the vegetation threshold.
+    """
+    water = auto_threshold(
+        indices["ndwi"], FEATURE_TYPES["water"]["default_threshold"], AUTO_THRESHOLD_BOUNDS["water"]
+    )
+    with np.errstate(invalid="ignore"):
+        land_ndvi = indices["ndvi"][~(indices["ndwi"] > water[0])]
+    vegetation = auto_threshold(
+        land_ndvi, FEATURE_TYPES["vegetation"]["default_threshold"], AUTO_THRESHOLD_BOUNDS["vegetation"]
+    )
+    return {"water": water, "vegetation": vegetation}
+
 
 def built_or_bare_raw(
     indices: Dict[str, np.ndarray], ndvi_below: float, water_threshold: float

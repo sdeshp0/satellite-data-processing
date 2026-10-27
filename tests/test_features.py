@@ -82,3 +82,46 @@ def test_built_reference_adds_buildings_near_footprints():
     ref = built_reference(landcover, np.array([2]), np.array([2]))
     assert ref.sum() == 9 and ref[1:4, 1:4].all()
     assert built_reference(None) is None
+
+
+def _two_groups(low, high, n_low, n_high, spread=0.05, seed=0):
+    rng = np.random.default_rng(seed)
+    return np.concatenate([rng.normal(low, spread, n_low), rng.normal(high, spread, n_high)])
+
+
+def test_auto_threshold_splits_two_groups():
+    from core.features import auto_threshold
+
+    values = _two_groups(-0.3, 0.8, 6000, 4000)
+    values[:50] = np.nan
+    threshold, auto = auto_threshold(values, 0.0, (-0.15, 0.35))
+    assert auto
+    assert -0.15 <= threshold <= 0.35
+
+
+def test_auto_threshold_falls_back_outside_bounds_or_one_sided():
+    from core.features import auto_threshold
+
+    # Dry land only: Otsu splits it somewhere far below any water.
+    assert auto_threshold(_two_groups(-0.5, -0.2, 5000, 5000), 0.0, (-0.15, 0.35)) == (0.0, False)
+    # Water is under 2% of pixels: too few to trust the split.
+    assert auto_threshold(_two_groups(-0.3, 0.8, 9900, 100), 0.0, (-0.9, 0.9)) == (0.0, False)
+    # One bell curve: Otsu cuts it near the middle, but there are no two groups.
+    one_group = np.random.default_rng(2).normal(0.1, 0.3, 10000)
+    assert auto_threshold(one_group, 0.0, (-0.15, 0.35)) == (0.0, False)
+    # Too few or constant pixels.
+    assert auto_threshold(np.full(50, 0.5), 0.3, (0.2, 0.5)) == (0.3, False)
+
+
+def test_scene_thresholds_picks_vegetation_among_land_only():
+    from core.features import scene_thresholds
+
+    rng = np.random.default_rng(1)
+    n = 3000
+    # Water, city and forest, a third each.
+    ndwi = np.concatenate([rng.normal(0.8, 0.05, n), rng.normal(-0.2, 0.05, n), rng.normal(-0.6, 0.05, n)])
+    ndvi = np.concatenate([rng.normal(-0.5, 0.05, n), rng.normal(0.15, 0.05, n), rng.normal(0.65, 0.05, n)])
+    out = scene_thresholds({"ndwi": ndwi, "ndvi": ndvi})
+    assert out["water"][1] and -0.15 <= out["water"][0] <= 0.35
+    # With water included, Otsu would split water from land near 0.
+    assert out["vegetation"][1] and 0.3 <= out["vegetation"][0] <= 0.5
