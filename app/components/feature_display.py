@@ -34,6 +34,7 @@ from core.features import (
     BUILT_OR_BARE_MIN_NDBI,
     FEATURE_TYPES,
     built_or_bare_raw,
+    scene_thresholds,
     built_reference,
     clean_mask,
     split_built_or_bare,
@@ -93,9 +94,10 @@ def feature_display(
     """
     st.subheader("Feature Identification")
     st.caption(
-        "Finds each feature with fixed rules tuned against ESA WorldCover (listed under "
-        "\"Settings used\") and crosshatches it on the map, one colour per feature type. Water and vegetation come straight from "
-        "their indices; urban and bare soil share one rule and are split with a land-cover map. "
+        "Finds each feature with rules tuned against ESA WorldCover (listed under \"Settings used\") and "
+        "crosshatches it on the map, one colour per feature type. Water and vegetation come from their indices, "
+        "with cut-offs picked automatically for each scene; urban and bare soil share one rule and are split "
+        "with a land-cover map. "
         "Works for features several pixels wide at Sentinel-2's 10m resolution. Roads and individual "
         "buildings are sub-pixel and can't be reliably extracted this way "
         "(see the note at the bottom of this page)."
@@ -165,21 +167,24 @@ def feature_display(
     split_ref = built_reference(landcover, building_rows, building_cols)
 
     # --- Masks + contours per feature ---
-    water_threshold = FEATURE_TYPES["water"]["default_threshold"]
+    thresholds = scene_thresholds(indices)
+    water_threshold = thresholds["water"][0]
+    veg_threshold = thresholds["vegetation"][0]
     masks = {}
     contours_by_feature = {}
     for key in selected_features:
         info = FEATURE_TYPES[key]
         if info.get("built_or_bare"):
-            raw = built_or_bare_raw(indices, info["default_threshold"], water_threshold)
+            raw = built_or_bare_raw(indices, veg_threshold, water_threshold)
             mask = clean_mask(split_built_or_bare(raw, split_ref, key), min_region_px)
         else:
-            mask = threshold_mask(indices[info["index"]], info["default_threshold"], info["direction"], min_region_px)
+            threshold = water_threshold if key == "water" else veg_threshold
+            mask = threshold_mask(indices[info["index"]], threshold, info["direction"], min_region_px)
         masks[key] = mask
         contours_by_feature[key] = extract_contours(mask)
     with st.expander("Settings used"):
         st.markdown(_settings_markdown(
-            selected_features, min_region_px, px_ha, mask_clouds,
+            selected_features, thresholds, min_region_px, px_ha, mask_clouds,
             landcover_year if split_ref is not None else 0, building_rows is not None,
         ))
 
@@ -271,18 +276,18 @@ def feature_display(
 
 
 def _settings_markdown(
-    selected_features, min_region_px: int, px_ha: float, mask_clouds: bool,
+    selected_features, thresholds, min_region_px: int, px_ha: float, mask_clouds: bool,
     landcover_year: int, with_buildings: bool,
 ) -> str:
-    """The fixed rules behind each selected feature, in plain words, for the "Settings used" panel."""
-    veg = FEATURE_TYPES["vegetation"]["default_threshold"]
-    water = FEATURE_TYPES["water"]["default_threshold"]
+    """The rules behind each selected feature, in plain words, for the "Settings used" panel."""
+    water, water_auto = thresholds["water"]
+    veg, veg_auto = thresholds["vegetation"]
     lines = []
     for key in selected_features:
         info = FEATURE_TYPES[key]
         if info.get("built_or_bare"):
-            rule = (f"land that is not water (NDWI {water:.1f} or below) and not vegetation "
-                    f"(NDVI below {info['default_threshold']:.1f}), with NDBI above {BUILT_OR_BARE_MIN_NDBI:.1f}")
+            rule = (f"land that is not water (NDWI {water:.2f} or below) and not vegetation "
+                    f"(NDVI below {veg:.2f}), with NDBI above {BUILT_OR_BARE_MIN_NDBI:.1f}")
             if landcover_year:
                 built = f"ESA WorldCover {landcover_year}'s built-up class"
                 if key == "urban":
@@ -292,21 +297,36 @@ def _settings_markdown(
             else:
                 rule += " (no land-cover map was available to split urban from bare soil, so both show this same area)"
         elif key == "water":
-            rule = f"NDWI above {water:.1f}"
+            rule = f"NDWI above {water:.2f}" + _threshold_source(water_auto, "water")
         else:
-            rule = f"NDVI above {veg:.1f}"
+            rule = f"NDVI above {veg:.2f}" + _threshold_source(veg_auto, "vegetation")
         lines.append(f"- **{info['label']}:** {rule}.")
+    if any(FEATURE_TYPES[k].get("built_or_bare") for k in selected_features) and not (
+        {"water", "vegetation"} <= set(selected_features)
+    ):
+        lines.append(
+            f"- **Water and vegetation cut-offs:** NDWI {water:.2f}{_threshold_source(water_auto, 'water')}; "
+            f"NDVI {veg:.2f}{_threshold_source(veg_auto, 'vegetation')}."
+        )
     lines.append(
         f"- **Smallest region kept:** {min_region_px} pixels ({min_region_px * px_ha:.2f} ha); "
         "smaller specks and holes are treated as noise."
     )
     lines.append(f"- **Clouds and shadows:** {'masked out' if mask_clouds else 'not masked'} (sidebar).")
     lines.append(
-        "\nThese rules scored best against ESA WorldCover across six test landscapes (San Francisco, Phoenix, "
+        "\nWater and vegetation cut-offs are picked for each scene with Otsu's method, which finds the value "
+        "that best splits the scene's pixels into two groups; when the scene has no clear split, the default "
+        "is used. These rules scored best against ESA WorldCover across six test landscapes (San Francisco, Phoenix, "
         "Cairo, New Orleans, California's Central Valley and Rondônia; see `check_features.py`). Urban and "
         "bare soil reflect almost the same light, which is why a land-cover map splits them."
     )
     return "\n".join(lines)
+
+
+def _threshold_source(auto: bool, key: str) -> str:
+    if auto:
+        return " (picked for this scene)"
+    return f" (default; this scene had no clear {key} / non-{key} split)"
 
 
 def _load_landcover(reference, scene_year: int):

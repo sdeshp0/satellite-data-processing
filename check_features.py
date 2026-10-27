@@ -99,20 +99,29 @@ INDEX_NAMES = ["ndwi", "mndwi", "ndbi", "ndvi", "bsi"]
 
 
 def _rules(ix: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
-    """Candidate rules per feature, as name -> boolean mask. The first is the app's current rule."""
+    """Candidate rules per feature, as name -> boolean mask. "app:" marks the rule the app uses now."""
+    from core.features import scene_thresholds
+
     ndbi, ndvi, ndwi, mndwi, bsi = ix["ndbi"], ix["ndvi"], ix["ndwi"], ix["mndwi"], ix["bsi"]
+    auto = scene_thresholds(ix)
+    tw, tv = auto["water"][0], auto["vegetation"][0]
+    print("automatic thresholds (the app's rule): " + "; ".join(
+        f"{key} {value:+.2f}" + ("" if picked else " (no clear split, default used)")
+        for key, (value, picked) in auto.items()
+    ) + "; " + _otsu_report(ndwi, ndvi))
     with np.errstate(invalid="ignore"):
         not_water = (ndwi <= 0) & (mndwi <= 0)
         return {
             "water": {
-                "current: NDWI > 0": ndwi > 0,
+                "fixed: NDWI > 0": ndwi > 0,
                 "MNDWI > 0": mndwi > 0,
                 "MNDWI > 0.2": mndwi > 0.2,
                 "NDWI > 0 or MNDWI > 0.2": (ndwi > 0) | (mndwi > 0.2),
                 "MNDWI > 0, NDVI < 0.2": (mndwi > 0) & (ndvi < 0.2),
+                "app: automatic NDWI": ndwi > tw,
             },
             "urban": {
-                "current: NDBI > 0": ndbi > 0,
+                "old: NDBI > 0": ndbi > 0,
                 "NDBI > 0, not water": (ndbi > 0) & not_water,
                 "NDBI > -0.1, not water, NDVI < 0.3": (ndbi > -0.1) & not_water & (ndvi < 0.3),
                 "NDBI > -0.2, not water, NDVI < 0.3": (ndbi > -0.2) & not_water & (ndvi < 0.3),
@@ -121,12 +130,13 @@ def _rules(ix: Dict[str, np.ndarray]) -> Dict[str, Dict[str, np.ndarray]]:
                 "not water, NDVI < 0.25, BSI < 0.1": not_water & (ndvi < 0.25) & (bsi < 0.1),
             },
             "vegetation": {
-                "current: NDVI > 0.3": ndvi > 0.3,
+                "fixed: NDVI > 0.3": ndvi > 0.3,
                 "NDVI > 0.2": ndvi > 0.2,
                 "NDVI > 0.4": ndvi > 0.4,
+                "app: automatic NDVI": ndvi > tv,
             },
             "bare_soil": {
-                "current: BSI > 0": bsi > 0,
+                "old: BSI > 0": bsi > 0,
                 "BSI > 0, not water, NDVI < 0.3": (bsi > 0) & not_water & (ndvi < 0.3),
                 "BSI > 0.1, not water, NDVI < 0.3": (bsi > 0.1) & not_water & (ndvi < 0.3),
                 "BSI > 0.1, not water, NDVI < 0.2": (bsi > 0.1) & not_water & (ndvi < 0.2),
@@ -295,6 +305,22 @@ def _alignment(ix, clear, landcover, max_shift: int = 4) -> None:
         at_zero = _f1(mask, target_full[inner] & clear[inner])
         print(f"  {name:<26} no shift F1 {at_zero:.2f}; best F1 {best:.2f} with WorldCover moved "
               f"{best_shift[0]:+d} rows, {best_shift[1]:+d} cols")
+
+
+def _otsu_report(ndwi: np.ndarray, ndvi: np.ndarray) -> str:
+    """Otsu's raw cut-off and separation per index, before the app's range and separation checks."""
+    from skimage.filters import threshold_otsu
+
+    from core.features import split_separation
+
+    parts = []
+    for name, values in (("NDWI", ndwi), ("NDVI (all pixels)", ndvi)):
+        values = np.clip(values[np.isfinite(values)], -1, 1)
+        if values.size < 100:
+            continue
+        t = float(threshold_otsu(values))
+        parts.append(f"raw Otsu {name} {t:+.2f}, separation {split_separation(values, t):.2f}")
+    return "; ".join(parts)
 
 
 def _score(ix, clear, landcover) -> Dict[str, Dict[str, Optional[Tuple[float, float, float]]]]:
