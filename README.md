@@ -150,7 +150,7 @@ additional workflows or pages.
   under 0.2 ha dropped as noise (`scikit-image`). The water (NDWI) and
   vegetation (NDVI) cut-offs are picked per scene with Otsu's method, kept
   only when they land in a sensible range (NDWI -0.15 to 0.35, NDVI 0.2 to
-  0.5) and split off at least 2% of pixels; otherwise the defaults (NDWI
+  0.4) and split off at least 2% of pixels; otherwise the defaults (NDWI
   0, NDVI 0.3) are used.
 - 💾 **Downloads**: outlines as georeferenced GeoJSON (opens directly in
   QGIS or similar), or a single selected feature's mask as GeoTIFF.

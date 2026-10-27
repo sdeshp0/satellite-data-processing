@@ -120,8 +120,8 @@ def test_scene_thresholds_picks_vegetation_among_land_only():
     n = 3000
     # Water, city and forest, a third each.
     ndwi = np.concatenate([rng.normal(0.8, 0.05, n), rng.normal(-0.2, 0.05, n), rng.normal(-0.6, 0.05, n)])
-    ndvi = np.concatenate([rng.normal(-0.5, 0.05, n), rng.normal(0.15, 0.05, n), rng.normal(0.65, 0.05, n)])
+    ndvi = np.concatenate([rng.normal(-0.5, 0.05, n), rng.normal(0.1, 0.05, n), rng.normal(0.55, 0.05, n)])
     out = scene_thresholds({"ndwi": ndwi, "ndvi": ndvi})
     assert out["water"][1] and -0.15 <= out["water"][0] <= 0.35
     # With water included, Otsu would split water from land near 0.
-    assert out["vegetation"][1] and 0.3 <= out["vegetation"][0] <= 0.5
+    assert out["vegetation"][1] and 0.25 <= out["vegetation"][0] <= 0.4
